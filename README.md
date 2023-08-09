@@ -1,13 +1,10 @@
-# CODE // Project Title
+# Sex differences in human music perception are negligible 
 
-This repo contains all files for CODE. Google docs related to the project are in `musiclabgdrive`. Stim and other large files are on `musiclabnas`. If you don't have access to these resources, ask a Music Lab admin for help.
+**This repository is currently under construction**
 
-CODE does not have its own Trello board, but has a card on **musiclab-status** at https://trello.com/c/zkgEqrZ5.
+This repository contains all data, code, and text for the manuscript ***Sex differences in human music perception are negligible***. The preprint for this manuscript is publicly available at https://www.biorxiv.org/content/10.1101/2023.05.23.541970v1. 
 
-[or]
+For assistance, please contact the corresponding authors: Mila Bertolo (mila.bertolo@mail.mcgill.ca) and Samuel Mehr (mehr@hey.com).
 
-CODE has its own Trello board at xx link
-
-## Description
-
-Description of Project Title goes here.
+## Anatomy of the repo
+To render the paper, `knit` the .Rmd file `./writing/manuscript.Rmd`. Running this file will import the pre-processed data stored in `./data` in order to run all analyses and build all visualizations reported in the manuscript. 

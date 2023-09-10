@@ -1,0 +1,156 @@
+---
+title: "DIFF_figs"
+author: "Mila Bertolo"
+date: "4/19/2022"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(pacman)
+p_load(
+  broom,
+  broom.mixed,
+  car,
+  colorspace,
+  glue,
+  countrycode,
+  ggeffects,
+  ggnewscale,
+  ggpubr,
+  ggridges,
+  ggsignif,
+  ggtext,
+  here,
+  pROC,
+  Hmisc,
+  janitor,
+  kableExtra,
+  knitr,
+  lme4,
+  lmerTest,
+  lsr,
+  magick,
+  grid,
+  magrittr,
+  multcomp,
+  patchwork,
+  png,
+  rgeos,
+  gtable, 
+  rnaturalearth,
+  rnaturalearthdata,
+  scales,
+  sf,
+  sjPlot,
+  skimr,
+  tidyverse,
+  yardstick
+)
+```
+
+```{r}
+if(file.exists("../results/dat.Rdata")) {
+  load("../results/dat.Rdata")
+  } else{
+    dat <- data_prep(l.age = min_age, u.age = max_age, lessons.l.age = lessons_min_age, lessons.u.age = lessons_max_age)
+  }
+
+data <- dat %>%
+  dplyr::select(user_id, country)
+```
+
+Code lifted from the IDS repo
+
+```{r}
+
+# data to be piped into viz code
+countries <- data %>% # trial_data
+  count(country, sort = TRUE) %>%
+  # ensuring names match the map
+  mutate(country = case_when(
+    country == "The Netherlands" ~ "Netherlands",
+    country == "Russia" ~ "Russian Federation",
+    country == "South Korea" ~ "Republic of Korea",
+    TRUE ~ country
+    ))
+world <- ne_countries(scale = "medium", returnclass = "sf") %>%
+  filter(iso_a3 != "ATA") %>% # removing antartica
+  left_join(., countries, by = c("name_long" = "country")) %>%
+  dplyr::select(name = name_long, n, geometry) %>%
+  mutate(n = ifelse(is.na(n), 0, n))
+
+# viz
+map_listeners <- ggplot(world, aes(fill = log(n))) + 
+  geom_sf(lwd = .1, color = "grey70") +
+  scale_fill_gradient(
+    low = "white",
+    high = "#35bda9",
+    breaks = seq(0,11,11/4), 
+    labels = c("0","15","200","2,500","40,000"),
+    na.value = 0,
+    limits = c(0,11),
+    guide = guide_colorbar(order = 1, label.hjust = 1, frame.colour = "grey70", ticks.colour = "grey70", direction = "horizontal")
+  ) +
+  new_scale_fill() +
+  geom_sf(data = world %>% filter(name == "United States"), aes(fill = name), lwd = .1, color = "grey70") +
+  scale_fill_manual(labels = "200,000", values = "#2a9d8f", guide = guide_legend(order = 2, keyheight = 1,
+                                                                                 label.position = "bottom",
+                                                                                 label.vjust = .6)) +
+  coord_sf() +
+  theme_void() +
+  theme(
+    legend.position = "none",
+    legend.title = element_blank(),
+    legend.text = element_text(angle = 30),
+    legend.key.height=unit(.5, "cm"),
+    legend.box = "horizontal",
+    plot.margin = unit(c(5,5,50,5), "pt")
+    )
+# create log scale
+test <- ggplot(world, aes(fill = log(n))) +
+  geom_sf(lwd = .1, color = "grey70") +
+  scale_fill_gradient(
+    low = "white",
+    high = "#35bda9",
+    breaks = seq(0,11,11/4),
+    labels = c("0","15","200","2,500","40,000"),
+    na.value = 0,
+    limits = c(0,11),
+    guide = guide_colorbar(order = 1, label.hjust = 1, frame.colour = "grey70", ticks.colour = "grey70", direction = "horizontal")
+  ) +
+  coord_sf() +
+  theme_void() +
+  theme(
+    legend.position = c(0.7, -0.4),
+    legend.title = element_blank(),
+    legend.text = element_text(angle = 30),
+    legend.key.height=unit(.5, "cm"),
+    legend.box = "horizontal",
+    plot.margin = unit(c(5,5,50,5), "pt")
+    )
+log_scale <- gtable_filter(ggplot_gtable(ggplot_build(test)), "guide-box") 
+# create US scale
+test2 <- ggplot(world) +
+  geom_sf(lwd = .1, color = "grey70") +
+  geom_sf(data = world %>% filter(name == "United States"), aes(fill = name), lwd = .1, color = "grey70") +
+  scale_fill_manual(labels = "200,000", values = "#2a9d8f", guide = guide_legend(keyheight = 1,
+                                                                                 label.position = "bottom",
+                                                                                 label.vjust = .6)) +
+  coord_sf() +
+  theme_void() +
+  theme(
+    legend.position = c(0.7, -0.4),
+    legend.title = element_blank(),
+    legend.text = element_text(angle = 30),
+    legend.key.height=unit(.5, "cm"),
+    legend.box = "horizontal",
+    plot.margin = unit(c(5,5,50,5), "pt")
+    )
+US_scale <- gtable_filter(ggplot_gtable(ggplot_build(test2)), "guide-box") 
+map_listeners <- map_listeners + 
+  annotation_custom(log_scale, xmin=0.5, xmax=1, ymin=-110, ymax=-120) +
+  annotation_custom(US_scale, xmin=120, xmax=130, ymin=-104, ymax=-114)
+
+ggsave("./DIFF_listeners.png", map_listeners)
+```

@@ -1,5 +1,5 @@
 ---
-bibliography: themusiclab.bib
+bibliography: citations.bib
 csl: nature.csl
 header-includes:
 - \usepackage[left]{lineno}
@@ -74,7 +74,7 @@ p_load(
   tidyverse
 )
 
-source("../analysis/data_prep_sexdiff.R")
+#source("../analysis/data_prep_sexdiff.R")
 source("../analysis/fas.R")
 source("../analysis/maha_v8c.R")
 

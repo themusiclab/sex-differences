@@ -1005,8 +1005,7 @@ c_dat %>%
 # SI table detailing all items, their possible responses, and how the verbal responses were coded numerically
 # MB: deliberately loading in plyr here, late, to not interfere with dplyr verbs higher up
 library(plyr)
-SI_dat <- readRDS("../data/clean-person-level-data.rds") %>% 
-  select("music_tap", "out_of_tune", "music_skill", "music_listen", "lessons_enjoy", "lessons_peers", "theory_training", "music_feel", "music_listen_time", "familiarity_tradmusic") %>%
+SI_dat <- readRDS("../data/clean-person-level-data-filtered.rds") %>% 
   # mutate to character to allow pivot longer
   mutate(music_listen = as.character(music_listen)) %>% 
   pivot_longer(everything(), names_to = "item", values_to = "answer") %>%

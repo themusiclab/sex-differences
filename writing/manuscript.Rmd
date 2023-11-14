@@ -125,6 +125,19 @@ if(file.exists("../results/dat.Rdata")) {
 
 n <- nrow(dat)
 
+ability_vars <- c("cabat_ability","mdt_ability","mpt_ability")
+sf_abililty_vars <- c("music_tap_n","out_of_tune_n","music_skill_n","music_listen_n")
+train_vars <- c("lessons_enjoy_n","lessons_peers_n","theory_training_n","music_lessons_n")
+listen_vars <- c("music_feel_n","music_listen_time_n","familiarity_tradmusic_n")
+early_vars <- c("lessons_age","music_p_sing_n")
+ses_vars <- c("education_n","income_n")
+demog_vars <- c("gender","age")
+noise_vars <- c("hearing_imp_n","workspace_n")
+
+min.load <- 0.3 # Global threshold for factor loadings used in factor analyses
+s1 <- sample(1:round(n/2)) #Subsample for exploratory analyses
+s2 <- seq(1:n)[-s1] #Subsample for confirmatory analyses
+
 n_total <- dat %>% summarise(n = n()) %>% pull
 n_male <- dat %>% filter(gender_n == "Male") %>% summarise(n = n()) %>% pull()
 n_female <- dat %>% filter(gender_n == "Female") %>% summarise(n = n()) %>% pull()

@@ -5,7 +5,7 @@ header-includes:
 - \usepackage[left]{lineno}
 - \usepackage{ragged2e}
 - \usepackage{caption}
-- \usepackage{longtable}
+- \usepackage{longtable}[=v4.13]
 - \usepackage[labelformat = empty]{caption}
 - \usepackage{afterpage}
 - \usepackage{fontenc}
@@ -63,7 +63,7 @@ p_load(
   janitor,
   kableExtra,
   knitr,
-  lavaan,
+  lavaan, # this script was written using lavaan version 0.6-17, available at: https://cran.r-project.org/src/contrib/Archive/lavaan/
   partykit,
   png,
   psych,

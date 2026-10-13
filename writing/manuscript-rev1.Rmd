@@ -1,0 +1,1697 @@
+---
+bibliography: themusiclab.bib
+csl: nature.csl
+header-includes:
+- \usepackage[left]{lineno}
+- \usepackage{ragged2e}
+- \usepackage{caption}
+- \usepackage{longtable}
+- \usepackage[labelformat = empty]{caption}
+- \usepackage{afterpage}
+- \usepackage{fontenc}
+- \usepackage{soul}
+- \usepackage{xcolor}
+- \usepackage[symbol]{footmisc}
+- \usepackage{numprint}
+- \usepackage{lineno}
+- \npthousandsep{,}
+- \definecolor{bleu}{HTML}{2200cc}
+- \renewcommand{\thefootnote}{\fnsymbol{footnote}}
+notes-after-punctuation: no
+urlcolor: bleu
+linkcolor: bleu
+output:
+  pdf_document: default
+editor_options:
+  markdown:
+    wrap: sentence
+---
+
+```{r chunk_knit_settings, include=F}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, results = FALSE)
+options(scipen = 999) # disable scientific notation
+knitr::knit_hooks$set(inline = function(x) {
+  prettyNum(x, big.mark=",")
+})
+####################################################################
+# There are a number computations that take a long time to run
+# For convenience, these computations are parameterized such that 
+# they are not run each time the manuscript is knitted by default
+# and instead just load the last saved run.
+# If you want to run these, set full_run below to TRUE.
+# Otherwise, do nothing.
+####################################################################
+full_run <- FALSE
+if (full_run == TRUE) {
+  source(here("analysis", "statistical", "lasso.R"))
+}
+```
+
+```{r load_libraries_and_functions}
+library(pacman)
+options(rgl.useNULL = TRUE) # required for old macOS 
+library(rgl)                
+p_load(
+  BayesFactor,
+  broom,
+  broom.mixed,
+  cowplot,
+  effectsize,
+  gamlss,
+  ggpubr,
+  ggridges,
+  grid,
+  heplots,
+  here,
+  janitor,
+  kableExtra,
+  knitr,
+  lavaan,
+  magick,
+  partykit,
+  patchwork,
+  png,
+  psych,
+  rnaturalearth,
+  rstatix,
+  semPlot,
+  sf,
+  sjPlot,
+  tidyverse
+)
+
+source("../analysis/data_prep_sexdiff.R")
+source("../analysis/fas.R")
+source("../analysis/maha_v8c.R")
+
+# format p-values
+format_p <- function(p) { 
+  if (p < .001) {
+    return("< .001")
+  } else {
+    return(paste0("= ", round(p, digits = 3)))
+  }
+}
+
+# loads in pre-fit models to save time on knitting
+# if you want to reproduce model results from scratch, delete contents of 'results' folder
+fit_or_load <- function(name, fit_fun){
+  path <- here('results', paste0(name, '.rds'))
+  saved_model_exists <- file.exists(path)
+  if (saved_model_exists) {
+    fit <- readRDS(path)
+  } else {
+    fit <- fit_fun()
+    dir.create("results", showWarnings = FALSE)
+    saveRDS(fit, path)
+  }
+  return(fit)
+}
+```
+
+```{=tex}
+\raggedright
+\LARGE
+```
+\textbf{Sex differences in human musicality are negligible}
+
+\bigskip
+\justifying
+\normalsize
+
+Mila Bertolo\*$^{1,2,3,4}$, Daniel Müllensiefen$^{5}$, Isabelle Peretz$^{3}$, Sarah C. Woolley$^{1,2,6}$, Jon T. Sakata†$^{1,2,6}$ & Samuel A. Mehr\*†$^{3,4,7}$
+
+\footnotesize
+
+^1^Integrated Program in Neuroscience, McGill University, Quebec, QC, Canada H1A 2B4.\
+^2^Center for Research on Brain, Language, and Music, Quebec, QC, Canada H3G 2A8.\
+^3^International Laboratory for Brain, Music, and Sound Research (BRAMS), Department of Psychology, University of Montreal, Montreal, QC, Canada.\
+^4^Yale Child Study Center, Yale University, New Haven, CT 06520, USA.\
+^5^Department of Psychology, Goldsmiths, University of London.\
+^6^Department of Biology, McGill University, Quebec, QC, Canada H3A 1B1.\
+^7^School of Psychology, University of Auckland, Auckland 1010 New Zealand.\
+
+†These authors contributed equally.
+
+\*Corresponding authors.
+E-mail: \href{mailto:mila.bertolo@mail.mcgill.ca}{mila.bertolo@mail.mcgill.ca}, \href{mailto:sam@auckland.ac.nz}{sam@auckland.ac.nz}
+
+\bigskip
+\normalsize
+\linenumbers
+
+```{r data load and processing}
+min_age <- 7
+max_age <- 100
+lessons_min_age <- 2
+lessons_max_age <- NA #permissible upper age for lessons will be set to current age of participant
+use_repeaters <- "No"
+exclude_HI <- "Yes"
+
+if(file.exists("../data/dat.Rdata")) {
+  load("../data/dat.Rdata")
+  } else{
+    dat <- data_prep(l.age = min_age, u.age = max_age, lessons.l.age = lessons_min_age, lessons.u.age = lessons_max_age, repeats = use_repeaters, HI = exclude_HI)
+  }
+
+n <- nrow(dat)
+
+ability_vars <- c("cabat_ability","mdt_ability","mpt_ability")
+sf_abililty_vars <- c("music_tap_n","out_of_tune_n","music_skill_n","music_listen_n")
+train_vars <- c("lessons_enjoy_n","lessons_peers_n","theory_training_n","music_lessons_n")
+listen_vars <- c("music_feel_n","music_listen_time_n","familiarity_tradmusic_n")
+early_vars <- c("lessons_age","music_p_sing_n")
+ses_vars <- c("education_n","income_n")
+demog_vars <- c("gender","age")
+noise_vars <- c("hearing_imp_n","workspace_n")
+
+min.load <- 0.3 # Global threshold for factor loadings used in factor analyses
+s1 <- sample(1:round(n/2)) #Subsample for exploratory analyses
+s2 <- seq(1:n)[-s1] #Subsample for confirmatory analyses
+
+n_total <- dat %>% summarise(n = n()) %>% pull
+n_male <- dat %>% filter(gender_n == "Male") %>% summarise(n = n()) %>% pull()
+n_female <- dat %>% filter(gender_n == "Female") %>% summarise(n = n()) %>% pull()
+n_other <- dat %>% filter(gender_n == "Other") %>% summarise(n = n()) %>% pull()
+n_northamer <- dat %>% 
+  filter(country %in% c("Anguilla", "Antigua and Barbuda", "Aruba", "The Bahamas", "Barbados", 
+                        "Belize", "Bermuda", "Bonaire", "British Virgin Islands", "Canada", 
+                        "Cayman Islands", "Clipperton Island", "Costa Rica", "Cuba", "Curacao", 
+                        "Dominica", "Dominican Republic", "El Salvador", "Federal Dependencies of Venezuela", 
+                        "Greenland", "Guadeloupe", "Guatemala", "Haiti", "Honduras", "Jamaica", "Martinique", 
+                        "Mexico", "Montserrat", "Nicaragua", "Nueva Esparta", "Panama", "Puerto Rico", "Saba",
+                        "San Andres and Providencia", "Saint Barthelemy", "Saint Kitts and Nevis", "Saint Lucia", 
+                        "Saint Martin", "Saint Pierre and Miquelon", "Saint Vicent and the Grenadines", 
+                        "Sint Eustatius", "Sint Maarten", "Trinidad and Tobago", "Turks and Caicos Islands",
+                        "United States", "United States Virgin Islands")) %>%
+  summarise(n= n()) %>%
+  pull()
+n_europe <- dat %>%
+  filter(country %in% c("Albania", "Andorra", "Armenia", "Austria", "Azerbaijan", "Belarus", "Belgium", 
+                        "Bosnia and Herzegovina", "Bulgaria", "Croatia", "Cyprus", "Czech Republic", 
+                        "Denmark", "Estonia", "Finland", "France", "Georgia", "Germany", "Greece", 
+                        "Hungary", "Iceland", "Ireland", "Italy", "Kazakhstan", "Latvia", "Liechtenstein", 
+                        "Luxembourg", "Malta", "Moldova", "Monaco", "Montenegro", "Kingdom of the Netherlands", 
+                        "North Macedonia", "Norway", "Poland", "Portugal", "Romania", "Russia",
+                        "San Marino", "Serbia", "Slovakia", "Slovenia", "Spain", "Sweden", "Switzerland", 
+                        "Turkey", "Ukraine", "United Kingdom", "Vatican City")) %>%
+  summarise(n = n()) %>%
+  pull()
+
+n_country <- unique(dat$country) %>% length()
+
+require(table1)
+dat_gen <- dat %>% filter(gender_n %in% c("Female", "Male"))
+table1::table1(~ music_tap_n+out_of_tune_n+music_skill_n+music_listen_n+lessons_enjoy_n+
+                 lessons_peers_n+theory_training_n+music_lessons_n+music_feel_n+music_listen_time_n+
+                 familiarity_tradmusic_n+lessons_age+music_p_sing_n+education_n+income_n+workspace_n+age+education_n|gender_n,data=dat_gen)
+
+```
+
+```{r Ability factor analysis}
+if(file.exists("../results/ef1_ability.RData")){
+  load("../results/ef1_ability.RData")
+  final_ability_vars <- dimnames(ef1_ability$loadings)[[1]]
+  } else{
+    ef1_ability <- e.fa(dat[,ability_vars],loading.threshold = min.load, subsample = dat[s1, ability_vars])
+    save(ef1_ability,file="../results/ef1_ability.RData")
+    final_ability_vars <- dimnames(ef1_ability$loadings)[[1]]
+  }
+if(file.exists("../results/cf1_ability.RData")){
+  load("../results/cf1_ability.RData")
+  fm_cf1_ability <- lavaan::fitMeasures(cf1_ability)
+  } else{
+    if(is.null(final_ability_vars)) {
+      final_ability_vars <- dimnames(e.fa(dat[,ability_vars],loading.threshold = min.load, subsample = dat[s1, ability_vars])$loadings)[[1]]
+    }
+    cf1_ability <- c.fa(dat[s2, final_ability_vars], check_ordinal=F)
+    fm_cf1_ability <- fitMeasures(cf1_ability)
+    save(cf1_ability,file="../results/cf1_ability.RData")
+  }
+if(is.null(dat$mus_ability)){
+  dat <- compute_fscores(data=dat, indicator_vars=final_ability_vars, var_name="mus_ability",check_ordinal = F,missing="pairwise")
+  save(dat,file="../results/dat.RData")}
+```
+
+```{r Self-reported musical ability factor analysis}
+if(file.exists("../results/ef1_sfabil.RData")){
+  load("../results/ef1_sfabil.RData")
+  final_sfabil_vars <- dimnames(ef1_sfabil$loadings)[[1]]
+  } else{
+    ef1_sfabil <- e.fa(dat[,sf_abililty_vars],loading.threshold = min.load, subsample = dat[s1, sf_abililty_vars])
+    save(ef1_sfabil,file="../results/ef1_sfabil.RData")
+    final_sfabil_vars <- dimnames(ef1_sfabil$loadings)[[1]]
+  }
+if(file.exists("../results/cf1_sfabil.RData")){
+  load("../results/cf1_sfabil.RData")
+  fm_cf1_sfabil <- fitMeasures(cf1_sfabil)
+  } else{
+    if(is.null(final_sfabil_vars)) {
+      final_sfabil_vars <- dimnames(e.fa(dat[,sfabil_vars],loading.threshold = min.load, subsample = dat[s1, sfabil_vars])$loadings)[[1]]
+    }
+    cf1_sfabil <- c.fa(dat[s2, final_sfabil_vars], check_ordinal=T)
+    fm_cf1_sfabil <- fitMeasures(cf1_sfabil)
+    save(cf1_sfabil,file="../results/cf1_sfabil.RData")
+  }
+if(is.null(dat$mus_sfabil)){
+  dat <- compute_fscores(data=dat, indicator_vars=final_sfabil_vars, var_name="mus_sfabil",check_ordinal = T,missing="pairwise")
+  save(dat,file="../results/dat.RData")
+  }
+```
+
+```{r Training factor analysis}
+if(file.exists("../results/ef1_train.RData")){
+  load("../results/ef1_train.RData")
+  final_train_vars <- dimnames(ef1_train$loadings)[[1]]
+  } else{
+    ef1_train <- e.fa(dat[,train_vars],loading.threshold = min.load, subsample = dat[s1, train_vars])
+    save(ef1_train,file="../results/ef1_train.RData")
+    final_train_vars <- dimnames(ef1_train$loadings)[[1]]
+  }
+if(file.exists("../results/cf1_train.RData")){
+  load("../results/cf1_train.RData")
+  fm_cf1_train <- fitMeasures(cf1_train)
+  } else{
+    if(is.null(final_train_vars)) {
+      final_train_vars <- dimnames(e.fa(dat[,train_vars],loading.threshold = min.load, subsample = dat[s1, train_vars])$loadings)[[1]]
+      }
+    cf1_train <- c.fa(dat[s2, final_train_vars], check_ordinal=T)
+    fm_cf1_train <- fitMeasures(cf1_train)
+    save(cf1_train,file="../results/cf1_train.RData")
+  }
+if(is.null(dat$mus_train)){
+  dat <- compute_fscores(data=dat, indicator_vars=final_train_vars, var_name="mus_train",check_ordinal = T,missing="pairwise")
+  save(dat,file="../results/dat.RData")
+  }
+```
+
+```{r Listening factor analysis}
+if(file.exists("../results/ef1_listen.RData")){
+  load("../results/ef1_listen.RData")
+  } else{
+    ef1_listen <- e.fa(dat[,listen_vars],loading.threshold = min.load, subsample = dat[s1, listen_vars])
+    save(ef1_listen,file="../results/ef1_listen.RData")
+    final_listen_vars <- dimnames(ef1_listen$loadings)[[1]]
+  }
+if(file.exists("../results/cf1_listen.RData")){
+  load("../results/cf1_listen.RData")
+  fm_cf1_listen <- fitMeasures(cf1_listen)
+  } else{
+    if(is.null(final_listen_vars)) {
+      final_listen_vars <- dimnames(e.fa(dat[,listen_vars],loading.threshold = min.load, subsample = dat[s1, listen_vars])$loadings)[[1]]
+      }
+    cf1_listen <- c.fa(dat[s2, final_listen_vars], check_ordinal=T)
+    fm_cf1_listen <- fitMeasures(cf1_listen)
+    save(cf1_listen,file="../results/cf1_listen.RData")
+  }
+if(is.null(dat$mus_listen)){
+  dat <- compute_fscores(data=dat, indicator_vars=final_listen_vars, var_name="mus_listen",check_ordinal = T,missing="pairwise")
+  save(dat,file="../results/dat.RData")
+  }
+```
+
+```{r sex differences}
+c_dat <- dat
+c_dat$gender_n[c_dat$gender_n=="Other"] <- NA
+c_dat <- c_dat[!is.na(c_dat$gender_n),]
+c_dat$gender_n <- droplevels((c_dat$gender_n))
+vars <- c("mpt_ability","mdt_ability","cabat_ability","mus_ability")
+
+if(file.exists("../results/model_coeffs.RData")){
+  load("../results/model_coeffs.RData")
+  } else{
+      c_dat_red <- na.omit(c_dat[,c("gender_n",vars)])
+      model_coeffs <- map_dfr(vars, function(v) gamlss(as.formula(sprintf(" %s ~ gender_n", v)), sigma.fo= ~ gender_n,family=NO(sigma.link="identity"),data = c_dat_red, trace=F) %>% broom::tidy())
+      model_coeffs <- cbind(DV=rep(vars,each=4),model_coeffs)
+      save(model_coeffs, file="../results/model_coeffs.RData")
+  }
+model_coeffs
+
+gg_mpt <- ggplot(c_dat, aes(x=mpt_ability, fill=gender_n, color = gender_n)) + 
+  geom_density(alpha=0.4) +
+  labs(x = "Mistuning Perception", 
+       y = "Density") +
+  scale_fill_manual(values = c("Male" = "#00BFC4", "Female" = "#F8766D")) +
+  scale_color_manual(values = c("Male" = "#008B8B", "Female" = "#C71585")) +
+  theme_classic()
+gg_mdt <- ggplot(c_dat, aes(x=mdt_ability, fill=gender_n, color = gender_n)) + 
+  geom_density(alpha=0.4)+
+  labs(x = "Melodic Discrimination", 
+       y = "Density") +
+  scale_fill_manual(values = c("Male" = "#00BFC4", "Female" = "#F8766D")) +
+  scale_color_manual(values = c("Male" = "#008B8B", "Female" = "#C71585")) +
+  theme_classic()
+gg_cabat <- ggplot(c_dat, aes(x=cabat_ability, fill=gender_n, color = gender_n)) + 
+  geom_density(alpha=0.4) +
+  labs(x = "Beat Alignment", 
+       y = "Density") +
+  scale_fill_manual(values = c("Male" = "#00BFC4", "Female" = "#F8766D")) +
+  scale_color_manual(values = c("Male" = "#008B8B", "Female" = "#C71585")) +
+  theme_classic()
+gg_mus <- ggplot(c_dat, aes(x=mus_ability, fill=gender_n, color = gender_n)) + 
+  geom_density(alpha=0.4) +
+  labs(x = "General Music Perception Ability", 
+       y = "Density") + 
+  scale_fill_manual(values = c("Male" = "#00BFC4", "Female" = "#F8766D")) +
+  scale_color_manual(values = c("Male" = "#008B8B", "Female" = "#C71585")) +
+  theme_classic()
+
+if(file.exists("../results/effectsizes.RData")){
+  load("../results/effectsizes.RData")
+  } else{
+    cohens_ds <- map_dfr(vars, function(v) cohens_d(as.formula(sprintf(" %s ~ gender_n", v)), data = c_dat, pooled_sd = F,verbose=F) %>% broom::tidy())[c(1,5,9,13),3]
+    overlap <- map_dfr(vars, function(v) p_overlap(as.formula(sprintf(" %s ~ gender_n", v)), data = c_dat, parametric=F, verbose=F) %>% broom::tidy())[c(1,5,9,13),3]
+    prob_superior <- map_dfr(vars, function(v) p_superiority(as.formula(sprintf(" %s ~ gender_n", v)), data = c_dat, parametric=T, verbose=F) %>% broom::tidy())[c(1,5,9,13),3]
+    eta_sq <- map_dfr(vars, function(v) etasq(lm(as.formula(sprintf(" %s ~ gender_n", v)), data = c_dat)) %>% broom::tidy())[,3]
+    r2 <- map_dfr(vars, function(v) summary(lm(as.formula(sprintf(" %s ~ gender_n", v)), data = c_dat))$r.squared %>% broom::tidy())
+    bfs <- map_dfr(vars, function(v) extractBF(ttestBF(formula=as.formula(sprintf(" %s ~ gender_n", v)), data = c_dat))[1]) 
+    effectsizes <- data.frame(DV=vars,cohens_d=cohens_ds$mean, pct_overlap=overlap$mean, prob_superior = prob_superior$mean, eta_sq=eta_sq$mean, R2 = r2$x, BayesFactor=bfs$bf)
+    
+  c_dat_m <- c_dat[c_dat$gender_n=="Male",c("mpt_ability","mdt_ability","cabat_ability")]
+  c_dat_f <- c_dat[c_dat$gender_n=="Female",c("mpt_ability","mdt_ability","cabat_ability")]
+  mv_es <- maha(c_dat_f, c_dat_m)
+  mv_esq <- etasq(lm(cbind(mpt_ability,mdt_ability,cabat_ability) ~ gender_n, data=c_dat))
+  effectsizes <- rbind(effectsizes,c("multivariate",mv_es$D,mv_es$OVL, mv_es$CL,mv_esq["gender_n",1], NA))
+  save(effectsizes, file="../results/effectsizes.RData")
+  }
+
+# for plugging numbers in text
+effect_d <- effectsizes %>%
+  as.data.frame() %>%
+  dplyr::select(DV, cohens_d) %>%
+  filter(DV != "multivariate") %>%
+  mutate(cohens_d = as.numeric(cohens_d) %>% round(digits = 3))
+
+# variance ratios to plug in text
+var_ratio <- c_dat %>%
+  dplyr::select(gender_n, mpt_ability, mdt_ability, cabat_ability, mus_ability) %>%
+  group_by(gender_n) %>%
+  summarise(mpt = var(mpt_ability), 
+            mdt = var(mdt_ability),
+            cabat = var(cabat_ability),
+            mus_ability = var(mus_ability)) %>%
+  pivot_longer(cols = c("mpt", "mdt", "cabat", "mus_ability"),
+               names_to = "DV",
+               values_to = "variance") %>%
+  pivot_wider(names_from = "gender_n", values_from = variance) %>%
+  mutate(ratio = round(Male/Female, digits = 3)) %>%
+  mutate(data = "main")
+```
+
+```{r replication_data_load}
+dat_soundout <- readRDS(here('data', 'dat_replication_soundout_filtered.rds')) 
+
+dat_tml_rep <- readRDS(here('data', 'dat_replication_tml.rds'))
+  
+n_us_f <- dat_soundout %>% filter(country == "United States", gender == "Female") %>% nrow()
+n_us_m <- dat_soundout %>% filter(country == "United States", gender == "Male") %>% nrow()
+
+n_uk_f <- dat_soundout %>% filter(country == "United Kingdom", gender == "Female") %>% nrow()
+n_uk_m <- dat_soundout %>% filter(country == "United Kingdom", gender == "Male") %>% nrow()
+
+n_tml_rep_m <- dat_tml_rep %>% filter(gender == "Male") %>% nrow()
+n_tml_rep_f <- dat_tml_rep %>% filter(gender == "Female") %>% nrow()
+```
+
+<!--- summary paragraph, fully referenced 200 words --> 
+
+**Abstract.** Since Darwin [@Darwin1871], researchers have proposed that human musicality evolved in a reproductive context in which males produce music to signal their mate quality to females. Sexually selected traits result from sex differences in the costs of high-quality signal production and high-fidelity signal detection [@Wiley2006], leading to observable sexual dimorphisms across many species [@Searcy1988; @Irestedt2009]. If musicality is a sexually selected trait in humans, males and females should then differ in their music perception ability, music production ability, or both. The evidence for this possibility is unclear, because previous reports of sex differences in human auditory perception are restricted in scope and inconsistent in direction [@Ravignani2018; @Fitch2006; @Marcus2012; @Bowling2021; @Zentner2021; @Wolf2018; @Borniger2013; @Miles2016; @Wisniewski2014; @Mosing2015]. Here, we report a test of music processing ability in >890,000 participants from `r n_country` countries, over a main study and three replication studies. In contrast to other non-musical human traits [@Archer2019; @Lippa2009; @Puts2011; @Archer2004], and in contrast to music-related traits in non-human animals [@Hoeschele2012; @Hahn2017; @Rouse2023; @Christie2004], we found no consistent advantage in music perception or self-reported music production abilities for either sex. The sex differences we did observe in the main study (n = `r n_male + n_female`) were negligible (Cohen's \textit{d} range: `r abs(effect_d$cohens_d) %>% min()`-`r abs(effect_d$cohens_d) %>% max()`), and Bayesian analyses of general music perception ability indicated evidence in favor of the null hypothesis of no sex difference (Bayes Factor = 0.6). This pattern of results held over the three replication studies. These results imply that the minds of men and women are largely similar when it comes to musicality, and so it is unlikely that sexual selection played any major role in the evolution of human musicality.
+
+# Main Text
+
+Music is ubiquitous across human societies, and there are numerous similarities in the forms and functions of musical styles across societies and cultures [@Mehr2019; @Yurdum2023; @Lomax1977; @Singh2023; @Jacoby2021; @Anglada-Tort2023; @Sievers2013; @Fritz2009; @Trehub1993].
+The biological and evolutionary roots of musicality, accordingly, have been debated at length [@Mithen2005; @Fitch2006b; @Honing2018a; @Ravignani2018; @Marcus2012; @Pinker1997; @Orians2014; @Honing2018b]. One common hypothesis, originally proposed by Darwin [@Darwin1871], and endorsed by many others [@Werner1997; @vandenBroek2009; @Miller2000; @Madison2018; @Novaes2023] is that music evolved via sexual selection as a credible signal of mate quality: males produce music to signal mate quality to females, while females assess potential mates based on their musical ability. This idea echoes credible signals of mate quality found in many non-human species, such as in the swamp sparrow (\textit{Melospiza georgiana}), where females prefer male songs with rapid trills that are physically challenging to produce [@Ballentine2004]; in birds-of-paradise (\textit{Paradisaeidae}), where males evolved highly complex behavioral, morphological, and acoustic "courtship phenotypes" [@Ligon2018]; and in red-winged black birds (\textit{Agelaius phoeniceus}), where females but not males perceive the difference between conspecific male calls and other species' imitations of them [@Searcy1988]. Of course, humans are part of the animal kingdom, and in principle some of our vocalizations could operate similarly to these other species; indeed, human aesthetic judgments of animal calls align with those of numerous non-human species [@James2026].
+
+Sexually selected traits demonstrate a reliable pattern of sexual dimorphism because the costs involved in reproduction differ across the sexes. In species in which females incur the larger cost for reproduction (e.g., larger gametes, internal fertilization, pregnancy, and lactation), females tend to be more discriminating of social signals such as courtship vocalizations because the cost of reproducing with a lower-quality mate is higher for females [@Green1966; @Trivers1972; @Searcy1988; @Dabelsteen1993; @Otter1997; @Wiley2006]. Indeed, female advantages in the sensory detection and discrimination of courtship signals have been documented in bird [@Hoeschele2012; @Hahn2017], amphibian [@Bernal2007], and mammalian species [@Krizman2021]. If music evolved in the context of sexual selection, human males and females should therefore differ in their music perception ability, music production ability, or both. 
+
+The evidence for this prediction is mixed [@Ravignani2018; @Fitch2006a; @Marcus2012; @Mehr2021; @Bowling2021; @Zentner2021], and indeed the theoretical work does not clearly converge on a prediction for whether we might expect to see a female advantage in perception, a male advantage in production, or both. Some studies report a male advantage in musical analytic hearing abilities [@Wolf2018]; others report a female advantage in melodic recognition [@Miles2016] and auditory sensitivity [@Wisniewski2014]. Still others report no sex difference in pitch or beat perception abilities overall but possible differences in prevalence at the low extremes of these abilities [@Peretz2017]. Two studies that tested predictions related to the sexual selection theory of musicality have had mixed results: testosterone levels, as measured via saliva assays, were not predictive of men's musical aptitude [@Borniger2013], and in a large twin study, higher musical ability correlated with \textit{lower} reproductive success [@Mosing2015].
+
+Further, several papers reporting evidence of sexual selection for musicality have been retracted or have documented failures to replicate: the claim that women are more attracted to men with apparent musical ability [@Gueguen2014] was retracted in 2020 [@Gueguen2021]; the claim that women are more attracted to higher quality dancing in men [@Brown2005], retracted in 2013 [@Brown2013a]; and the claim that women prefer more complex music around ovulation [@Charlton2012] failed to replicate [@Charlton2014]. Moreover, even in cases where a \textit{bona fide} sex difference is found, such a difference could reflect sociocultural forces rather than biological forces [@Marcus2012]. This pattern has led to some skepticism regarding the sexual selection hypothesis for musicality evolution [@Marcus2012; @Ravignani2018; @Mehr2021]. 
+
+Despite the skepticism, this hypothesis receives continued attention. For example, in a 2021 issue of 60 commentary articles on the evolution of music [@Mehr2021; @Savage2021], 12 commentaries refer to the hypothesis that music evolved under sexual selection. This hypothesis continues to be a focus in recent empirical work and books [@Wassiliwizky2023; @Marin2022; @Keller2023; @Demartsev2023; @Miller2011; @Prum2017; @Orians2014; @Fleming2024]. 
+
+Here, we employ a large-scale, citizen-science approach to examine sex differences in music perception. In a first study, we recruited `r n_male + n_female` participants from `r n_country` countries (see \textit{Figure 1A} and \textit{SI Table 1}) via <https://themusiclab.org>, a popular platform for gamified studies of auditory perception abilities [@Long2023]. Of these, $n =$ `r n_female`  (`r round((n_female/n_total)*100, digits = 1)`%) self-identified as "female", and  $n =$ `r n_male` (`r round((n_male/n_total)*100, digits = 1)`%) self-identified as "male". They completed three musical perception-based tests presented in a random order, measuring their i) mistuning perception [@Larrouy-Maestri2019], ii) melodic discrimination [@Harrison2017], and iii) beat alignment perception [@Harrison2018]. These tests cover core components of the human musicality phenotype [@Honing2015], and a previous use of these tests has shown that they are sensitive enough to detect sub-population-level effects, such as the effect of native-language experience on music processing abilities [@Liu2023]. Participants reported demographic information, details of their musical training (if any), and listening habits (see \textit{SI Table 2}). The participant sample was skewed somewhat male, possibly indicative of self-selection that could confound an estimation of sex differences; as such, we also report  three replication studies to test the robustness of these findings. We begin with the results from the initial sample of `r n_male + n_female` participants.
+
+```{r fig_mega, results = "asis", fig.pos = "H", fig.width = 9, fig.height = 10, fig.cap = paste("\\textbf{Fig. 1 | Negligibly small sex differences in music perception ability. A} Geographic spread of participants who completed music perception tests. The shading of each country indicates the number of participants who self-reported that country as their location. \\textbf{B} In an aggregate measure of general music perception ability (composed of measures \\textbf{C, D, E}), there is a negligibly small difference between men and women's scores. This pattern persisted in three replication studies: two in balanced samples of participants from \\textbf{F} the United States (n = ", n_us_f ," women and n = ", n_us_m ," men), \\textbf{G} the United Kingdom (n = ", n_uk_f ," women and n = ", n_uk_m ," men), and \\textbf{H} a direct replication of the main study (n = ", n_tml_rep_f ," women and n = ", n_tml_rep_m ," men). The shaded areas represent kernel density estimations.", sep = "")}
+# original finding
+# listeners_map is built in viz/DIFF_viz_map.Rmd, and one component was manually moved to save space, producing viz/DIFF_listeners_manuallycleaned.png
+listener_map <- readPNG("../viz/DIFF_listeners_manuallycleaned.png")
+listener_map <- ggdraw() + draw_image(listener_map)
+
+gg_mus_megafig <- gg_mus + 
+  theme(legend.justification=c(0,1), legend.position=c(0,1), legend.title = element_blank())
+gg_mpt_megafig <- gg_mpt +
+  theme(legend.position = "none")
+gg_mdt_megafig <- gg_mdt +
+  theme(legend.position = "none")
+gg_cabat_megafig <- gg_cabat +
+  theme(legend.position = "none")
+
+# replications
+# To not bloat this document, these plots were built in separate script writing/revision-replication.Rmd with output saved to /viz
+mus_us <- image_read(here('viz', 'mus_us.png'))
+mus_us <- ggdraw() + draw_image(mus_us)
+
+mus_uk <- image_read(here('viz', 'mus_uk.png'))
+mus_uk <- ggdraw() + draw_image(mus_uk)
+
+mus_tml_rep <- image_read(here('viz', 'mus_tml_rep.png'))
+mus_tml_rep <- ggdraw() + draw_image(mus_tml_rep)
+
+# build
+original_subtests <- cowplot::plot_grid(listener_map, gg_mpt_megafig, gg_mdt_megafig, gg_cabat_megafig, 
+          ncol = 1, nrow = 4, labels = c("A", "C", "D", "E"),
+          label_y = 1, vjust = 1) %>%
+  ggdraw()
+
+original_g <- cowplot::plot_grid(gg_mus_megafig, 
+                                nrow = 1, labels = c("B"))
+original <- cowplot::plot_grid(original_subtests, original_g,
+                               nrow = 1, 
+                               rel_widths = c(1/3, 2/3)) %>% 
+  ggdraw()
+
+replications_g <- cowplot::plot_grid(mus_us, mus_uk, mus_tml_rep,
+                                    ncol = 3, nrow = 1, 
+                                    labels = c("F", "G", "H"),
+                                    vjust = 1.05)  %>% ggdraw() 
+
+replication <- cowplot::plot_grid(original, replications_g, 
+                                  nrow = 2, rel_heights = c(2/3, 1/3))
+
+#ggsave(here('viz', 'fig1_rev1.pdf'), replication)
+replication
+```
+
+```{r mean differences}
+mean_diffs <- c_dat %>%
+  dplyr::select(gender_n, mpt_ability, mdt_ability, cabat_ability, mus_ability) %>%
+  group_by(gender_n) %>%
+  summarise(mpt_mean = mean(mpt_ability), 
+            mpt_sd = sd(mpt_ability), 
+            mdt_mean = mean(mdt_ability),
+            mdt_sd = sd(mdt_ability), 
+            cabat_mean = mean(cabat_ability), 
+            cabat_sd = sd(cabat_ability),
+            mus_mean = mean(mus_ability),
+            mus_sd = sd(mus_ability)) %>%
+  mutate(across(where(is.numeric), ~round(., digits = 3)))
+```
+
+```{r replication_var_ratios}
+var_ratio_so_us <- dat_soundout %>%
+  filter(country == "United States") %>%
+  filter(!is.na(gender)) %>%
+  dplyr::select(gender, mpt, mdt, cabat, mus_ability) %>%
+  group_by(gender) %>%
+  summarise(mpt = var(mpt), 
+            mdt = var(mdt),
+            cabat = var(cabat),
+            mus_ability = var(mus_ability)) %>%
+  pivot_longer(cols = c("mpt", "mdt", "cabat", "mus_ability"),
+               names_to = "DV",
+               values_to = "variance") %>%
+  pivot_wider(names_from = "gender", values_from = variance) %>%
+  mutate(ratio = round(Male/Female, digits = 3)) %>%
+  mutate(data = "Replication 1 (US, n = 841)")
+
+var_ratio_so_uk <- dat_soundout %>%
+  filter(country == "United Kingdom") %>%
+  filter(!is.na(gender)) %>%
+  dplyr::select(gender, mpt, mdt, cabat, mus_ability) %>%
+  group_by(gender) %>%
+  summarise(mpt = var(mpt), 
+            mdt = var(mdt),
+            cabat = var(cabat),
+            mus_ability = var(mus_ability)) %>%
+  pivot_longer(cols = c("mpt", "mdt", "cabat", "mus_ability"),
+               names_to = "DV",
+               values_to = "variance") %>%
+  pivot_wider(names_from = "gender", values_from = variance) %>%
+  mutate(ratio = round(Male/Female, digits = 3)) %>%
+  mutate(data = "Replication 2 (UK, n = 718)")
+
+var_ratio_tml_rep <- dat_tml_rep %>%
+  dplyr::select(gender, mpt, mdt, cabat, mus_ability) %>%
+  group_by(gender) %>%
+  summarise(mpt = var(mpt), 
+            mdt = var(mdt),
+            cabat = var(cabat),
+            mus_ability = var(mus_ability)) %>%
+  pivot_longer(cols = c("mpt", "mdt", "cabat", "mus_ability"),
+               names_to = "DV",
+               values_to = "variance") %>%
+  pivot_wider(names_from = "gender", values_from = variance) %>%
+  mutate(ratio = round(Male/Female, digits = 3)) %>%
+  mutate(data = "Replication 3 (global, n = 334,703)")
+```
+
+```{r replication_effectsizes_load}
+# to not bloat this document, effect sizes were computed in /writing/revision-replication-public.Rmd, and their results saved to /results. To reproduce these effect sizes from raw data, run /writing/revision-replication-public.Rmd
+effectsizes_us <- readRDS(here('results', 'effectsizes_replication_us.rds')) %>%
+  filter(DV != "multivariate") %>%
+  mutate(across(-DV, ~as.numeric(.x))) %>%
+  mutate(data = "Replication 1 (US, n = 841)")
+
+effectsizes_uk <- readRDS(here('results', 'effectsizes_replication_uk.rds')) %>%
+  filter(DV != "multivariate") %>%
+  mutate(across(-DV, ~as.numeric(.x))) %>%
+  mutate(data = "Replication 2 (UK, n = 718)")
+
+effectsizes_tml_rep <- readRDS(here('results', 'effectsizes_replication_tml.rds')) %>%
+  filter(DV != "multivariate") %>%
+  mutate(across(-DV, ~as.numeric(.x))) %>% 
+  mutate(data = "Replication 3 (global, n = 334,703)")
+```
+
+# Results
+
+## Men and women differ minimally
+
+We found statistically significant but negligibly sized sex differences in a measure of general music perception ability derived from the three tests, along with similarly negligible differences on each of the tests (p \< 0.05 for each; \textit{Figure 1B-E, Table 1}).
+Women, on average, scored higher than men on general music perception ability, but barely so (mean $\pm$ SD; women: `r mean_diffs[mean_diffs$gender_n == "Female", "mus_mean"]` $\pm$ `r mean_diffs[mean_diffs$gender_n == "Female", "mus_sd"]`; men: `r mean_diffs[mean_diffs$gender_n == "Male", "mus_mean"]` $\pm$ `r mean_diffs[mean_diffs$gender_n == "Male", "mus_sd"]`, Cohen's $d$ = `r effect_d[4,]$cohens_d`). This difference is approximately 300 to 600 times smaller than average vocal acoustic differences between men and woman, a well-documented sexual dimorphism (Cohen's $d = 2.7-5.7$ [@Puts2011]). 
+
+Further, a Bayesian approach to this analysis provided evidence leaning in favor of the null hypothesis of no true sex difference in general music perception ability (Bayes Factor = 0.6; \textit{Table 1}). We also observe variance ratios (variance in male scores / variance in female scores) very close to 1 (range `r var_ratio$ratio %>% min()` - `r var_ratio$ratio %>% max()`) (see SI).
+
+The pattern of results on the individual perception tests was internally inconsistent. Women outperformed men in the mistuning perception test (women; `r mean_diffs[mean_diffs$gender_n == "Female", "mpt_mean"]` $\pm$ `r mean_diffs[mean_diffs$gender_n == "Female", "mpt_sd"]`; men: `r mean_diffs[mean_diffs$gender_n == "Male", "mpt_mean"]` $\pm$ `r mean_diffs[mean_diffs$gender_n == "Male", "mpt_sd"]`, Cohen's d = `r effect_d[1,]$cohens_d`), but men outperformed women on the beat alignment (women: m = `r mean_diffs[mean_diffs$gender_n == "Female", "cabat_mean"]` $\pm$ `r mean_diffs[mean_diffs$gender_n == "Female", "cabat_sd"]`; men: `r mean_diffs[mean_diffs$gender_n == "Male", "cabat_mean"]` $\pm$ `r mean_diffs[mean_diffs$gender_n == "Male", "cabat_sd"]`, Cohen's d = `r effect_d[3,]$cohens_d`) and melodic discrimination tests (women: `r mean_diffs[mean_diffs$gender_n == "Female", "mdt_mean"]` $\pm$ `r mean_diffs[mean_diffs$gender_n == "Female", "mdt_sd"]`; men: `r mean_diffs[mean_diffs$gender_n == "Male", "mdt_mean"]` $\pm$ `r mean_diffs[mean_diffs$gender_n == "Male", "mdt_sd"]`, Cohen's d = `r effect_d[2,]$cohens_d`). Bayesian approaches to these differences indicate that they are highly unlikely to be strictly zero (Bayes Factors >1000), despite their very small sizes and inconsistent directions. However, effects of such small magnitude would typically be considered to be null or very small effects [@Hyde2014; @Archer2019; @Zell2015] (see \textit{Table 1} for other effect size specifications). 
+
+```{r cohend_self_assessed_skill}
+# cohen d effsizes between self-assessed music ability groups
+# between (1) "no skill at all" and (2) "novice"
+cohens_ds_musskill_12 <- map_dfr(vars, function(v) effectsize::cohens_d(as.formula(sprintf(" %s ~ music_skill_n", v)), data = filter(c_dat, music_skill_n %in% c(1,2)), pooled_sd = F,verbose=F) %>% broom::tidy())[c(1,5,9,13),3]
+# between (2) "novice" and (3) "some skill"
+cohens_ds_musskill_23 <- map_dfr(vars, function(v) effectsize::cohens_d(as.formula(sprintf(" %s ~ music_skill_n", v)), data = filter(c_dat, music_skill_n %in% c(2,3)), pooled_sd = F,verbose=F) %>% broom::tidy())[c(1,5,9,13),3]
+# between (3) "some skill" and (4) "a lot of skill"
+cohens_ds_musskill_34 <- map_dfr(vars, function(v) effectsize::cohens_d(as.formula(sprintf(" %s ~ music_skill_n", v)), data = filter(c_dat, music_skill_n %in% c(3,4)), pooled_sd = F,verbose=F) %>% broom::tidy())[c(1,5,9,13),3]
+# between (4) "a lot of skill" and (5) "expert"
+cohens_ds_musskill_45 <- map_dfr(vars, function(v) effectsize::cohens_d(as.formula(sprintf(" %s ~ music_skill_n", v)), data = filter(c_dat, music_skill_n %in% c(4,5)), pooled_sd = F,verbose=F) %>% broom::tidy())[c(1,5,9,13),3]
+# between (1) "no skill at all" and (5) "expert"
+cohens_ds_musskill_15 <- map_dfr(vars, function(v) effectsize::cohens_d(as.formula(sprintf(" %s ~ music_skill_n", v)), data = filter(c_dat, music_skill_n %in% c(1,5)), pooled_sd = F,verbose=F) %>% broom::tidy())[c(1,5,9,13),3]
+
+
+# partial eta squares of gender and self-assessed musical skill
+mv_esq <- etasq(lm(cbind(mpt_ability,mdt_ability,cabat_ability) ~ gender_n, data=c_dat))
+mv_esq_musskill <- etasq(lm(cbind(mpt_ability,mdt_ability,cabat_ability) ~ music_skill_n, data=c_dat))
+
+# for women
+# between (1) "no skill at all" and (5) "expert"
+cohens_ds_musskill_15_women <- map_dfr(vars, function(v) effectsize::cohens_d(as.formula(sprintf(" %s ~ music_skill_n", v)), data = filter(c_dat, music_skill_n %in% c(1,5) & gender_n == "Female"), pooled_sd = F,verbose=F) %>% broom::tidy())[c(1,5,9,13),3]
+
+# for men
+# between (1) "no skill at all" and (5) "expert"
+cohens_ds_musskill_15_men <- map_dfr(vars, function(v) effectsize::cohens_d(as.formula(sprintf(" %s ~ music_skill_n", v)), data = filter(c_dat, music_skill_n %in% c(1,5) & gender_n == "Male"), pooled_sd = F,verbose=F) %>% broom::tidy())[c(1,5,9,13),3]
+
+# difference between those who had and had not taken music lessons 
+cohens_d_music_lessons <- map_dfr(vars, function(v) effectsize::cohens_d(as.formula(sprintf(" %s ~ music_lessons_n", v)), data = filter(c_dat, music_lessons_n %in% c(0,1)), pooled_sd = F,verbose=F) %>% broom::tidy())[c(1,5,9,13),3]
+
+# difference between those who had "no theory training" and "a lot of music theory training"
+cohens_d_theory_lessons <- map_dfr(vars, function(v) effectsize::cohens_d(as.formula(sprintf(" %s ~ theory_training_n", v)), data = filter(c_dat, theory_training_n %in% c(1,5)), pooled_sd = F,verbose=F) %>% broom::tidy())[c(1,5,9,13),3]
+# men, "no" and "a lot" theory 
+cohens_d_theory_lessons_men <- map_dfr(vars, function(v) effectsize::cohens_d(as.formula(sprintf(" %s ~ theory_training_n", v)), data = filter(c_dat, theory_training_n %in% c(1,5) & gender_n == "Male"), pooled_sd = F,verbose=F) %>% broom::tidy())[c(1,5,9,13),3]
+# women, "no" and "a lot" theory
+cohens_d_theory_lessons_women <- map_dfr(vars, function(v) effectsize::cohens_d(as.formula(sprintf(" %s ~ theory_training_n", v)), data = filter(c_dat, theory_training_n %in% c(1,5) & gender_n == "Female"), pooled_sd = F,verbose=F) %>% broom::tidy())[c(1,5,9,13),3]
+```
+
+```{r diff_self_assesments}
+# tap in time with a musical beat
+diff_satap_desc <- c_dat %>%
+  group_by(gender_n) %>%
+  mutate(n = n(),
+         music_tap_n = as.numeric(music_tap_n)) %>%
+  summarise(n_yes = sum(music_tap_n == 1, na.rm = TRUE),
+            n = n(),
+            pc = (n_yes/n)*100)
+diff_satap <- fit_or_load("diff_satap", function() glm(music_tap_n ~ gender_n, filter(dat, gender_n %in% c("Male", "Female")), family = binomial(link = "logit")) %>% summary())
+
+# listening skill
+c_dat %>% 
+  group_by(gender_n) %>%
+  summarise(median_listen_skill = median(music_listen_n, na.rm = TRUE)) # median 5 (close to "I'm much better than other people") for both
+diff_salisten <- fit_or_load("diff_salisten", function() wilcox.test(dat[dat$gender_n == "Female",]$music_listen_n, dat[dat$gender_n == "Male",]$music_listen_n, conf.int = TRUE))
+
+# music production skill
+c_dat %>% 
+  group_by(gender_n) %>%
+  summarise(median_skill = median(music_skill_n, na.rm = TRUE)) # median 3 ("I have some skill") for both
+diff_saskill <- fit_or_load("diff_saskill", function() wilcox.test(dat[dat$gender_n == "Female",]$music_skill_n, dat[dat$gender_n == "Male",]$music_skill_n, conf.int = TRUE))
+
+# tell if singing out-of-tune
+diff_satune_desc <- c_dat %>%
+  group_by(gender_n) %>%
+  mutate(n = n(),
+         music_tap_n = as.numeric(out_of_tune_n)) %>%
+  summarise(n_yes = sum(music_tap_n == 1, na.rm = TRUE),
+            n = n(),
+            pc = (n_yes/n)*100)
+diff_satune <- fit_or_load("diff_satune", function() glm(out_of_tune_n ~ gender_n, filter(dat, gender_n %in% c("Male", "Female")), family = binomial(link = "logit")) %>% summary())
+
+```
+
+```{r fig2, results = 'asis', fig.show="hold", out.width="100%", fig.height = 7, fig.cap = paste("\\textbf{Fig. 2 | General music perception ability scores scale with self-reported musical skill and formal music education, but not with gender.} As expected, general music perception ability scores differ much more along other participant covariates, such as self-estimated musical skill, than they differ by sex. The shaded areas represent kernel density estimations. The verbal prompt was \\textit{`Think of your skill at making music (using a musical instrument or singing). How would you rate your own skill?'} The participant covariate of self-assessed musical skill captured much more variance in participants' general music perception ability scores, compared to their sex (partial $\\eta^2 = $", round(mv_esq_musskill, digits = 3), " for self-assessed musical skill, relative to partial $\\eta^2 = $", round(mv_esq, digits = 3), " for sex). Cohen's \\textit{d} values were all in the range of what would conventionally be described as medium effect sizes (Cohen's \\textit{d} between `no skill' and `novice' = ", cohens_ds_musskill_12[4,]$mean %>% abs() %>% round(digits = 3), "; between `novice' and `some skill' = ", cohens_ds_musskill_23[4,]$mean %>% abs() %>% round(digits = 3), "; between `some skill' and `a lot of skill' = ", cohens_ds_musskill_34[4,]$mean %>% abs() %>% round(digits = 3), "; between `a lot of skill' and `expert' = ", cohens_ds_musskill_45[4,]$mean %>% abs() %>% round(digits = 3), ").", sep = "")}
+
+gg_selfskill_mirror <- dat %>%
+  mutate(music_skill = as.factor(music_skill_n)) %>%
+  filter(!is.na(music_skill),
+         gender_n %in% c("Male", "Female")) %>%
+  ggplot(aes(x = mus_ability, fill = music_skill)) + 
+  geom_density(
+    data = ~ subset(.x, gender_n == "Female"),
+    alpha = 0.3
+  ) + 
+  geom_density(
+    data = ~ subset(.x, gender_n == "Male"),
+    aes(y = -after_stat(density)),
+    alpha = 0.3
+  ) + 
+  geom_hline(yintercept = 0, color = "black") +
+  scale_y_continuous(labels = abs) + 
+  scale_fill_manual(name="Self-assessed Music Skill", labels=c("I have no skill at all", "I\'m a novice", "I have some skill", "I have a lot of skill", "I\'m an expert"), values = c("#E69F00", "#F0E442", "#009E73", "#56B4E9", "#CC79A7")) +
+  labs(x = "general music perception ability",
+       y = "density (absolute)") + 
+  theme_classic() + 
+  theme(legend.justification=c(0,1), legend.position=c(0.03,1.03), legend.background = element_rect(fill = "transparent", colour = "transparent")) + 
+  annotate(
+    "text", x = 1.25, y = 0.6, label = "Female", fontface = "bold", size = 6,
+  ) + 
+  annotate(
+    "text", x = 1.25, y = -0.6, label = "Male", fontface = "bold", size = 6
+  )
+  
+
+gg_theory_train_mirror <- dat %>%
+  mutate(theory_training_n = as.factor(theory_training_n)) %>%
+  filter(!is.na(theory_training_n),
+         gender_n %in% c("Male", "Female")) %>%
+  ggplot(aes(x = mus_ability, fill = theory_training_n)) +
+  geom_density(
+    data = ~ subset(.x, gender_n == "Female"),
+    alpha = 0.3
+  ) + 
+  geom_density(
+    data = ~ subset(.x, gender_n == "Male"),
+    aes(y = -after_stat(density)),
+    alpha = 0.3
+  ) + 
+  geom_hline(yintercept = 0, color = "black") +
+  scale_y_continuous(labels = abs) + 
+  scale_fill_manual(name="Music Theory Training", labels=c("None", "A little", "Some", "A moderate amount", "A lot"), values = c("#E69F00", "#F0E442", "#009E73", "#56B4E9", "#CC79A7")) +
+  labs(x = "general music perception ability",
+       y = "density (absolute)") + 
+  theme_classic() + 
+  theme(legend.justification=c(0,1), legend.position=c(0.03,1.03), legend.background = element_rect(fill = "transparent", colour = "transparent")) + 
+  annotate(
+    "text", x = 1.25, y = 0.6, label = "Female", fontface = "bold", size = 6
+  ) + 
+  annotate(
+    "text", x = 1.25, y = -0.6, label = "Male", fontface = "bold", size = 6
+  )
+  
+cowplot::plot_grid(gg_selfskill_mirror, gg_theory_train_mirror, 
+          ncol = 1, nrow = 2, labels = c("A", "B"),
+          label_y = 1, vjust = 1)
+  
+```
+
+This lack of clear sex differences cannot be explained by test insensitivity, as multiple other participant measures explained substantial variability in general music perception ability scores. For example, those participants who reported they had taken music lessons scored substantially higher than those who reported having never taken lessons ($d =$ `r signif(cohens_d_music_lessons[4,], 2) %>% abs()`, i.e. 75 times larger than the main sex difference; \textit{SI Figure 3}). Other work on a subset of these data report moderately-sized effects of language, with native speakers of tonal languages showing an advantage in melodic discrimination, of roughly half the size of the effect of having had music lessons [@Liu2023].
+
+Furthermore, men and women's self-assessed music perception and production skills were highly similar (see _Methods_ for item details), and the relationship between self-reported factors and test scores expressed similarly between men and women. Similarly to the perception abilities we measured directly, men and women's _self-assessed_ musical listening abilities also differed minimally (answer scale 1-6: median answer 5 for both men and women; Wilcoxon test, W = `r diff_salisten$statistic %>% formatC(format = "e", digits = 2)`, $p$ `r diff_salisten$p.value %>% format_p()`, 95% CI [`r diff_salisten$conf.int[1] %>% round(digits = 5)`, `r diff_salisten$conf.int[2] %>% round(digits = 5)`], estimated higher score in men), comparable to the negligible difference in listening ability that we test directly here. Men and women also reported highly similar answers to questions pertaining to their ability to tap in time with a music beat (`r diff_satap_desc[1,4] %>% round(digits = 1)`% women answered “Yes” compared to `r diff_satap_desc[2,4] %>% round(digits = 1)`% of men; logistic regression, $\beta$ = `r diff_satap$coefficients[2,1] %>% round(digits = 3)`, $z =$ `r diff_satap$coefficients[2,3] %>% round(digits = 3)`, $p$ `r diff_satap$coefficients[2,4] %>% format_p()`, estimated higher score in men), their skill at making music (5 point scale: median answer 3 for both men and women; Wilcoxon test, W = `r diff_saskill$statistic %>% formatC(format = "e", digits = 2)`, $p$ `r diff_saskill$p.value %>% format_p()`, 95% CI [`r diff_saskill$conf.int[1] %>% round(digits = 5)`, `r diff_saskill$conf.int[2] %>% round(digits = 5)`], estimated higher score in men), and their ability to tell if they are singing out-of-tune (answer binary yes/no: `r diff_satune_desc[1,4] %>% round(digits = 1)`% of women answered “Yes”, compared to `r diff_satune_desc[2,4] %>% round(digits = 1)`% of men; logistic regression, $\beta$ = `r diff_satune$coefficients[2,1] %>% round(digits = 3)`, $z$ = `r diff_satune$coefficients[2,3] %>% round(digits = 3)`, $p$ `r diff_satune$coefficients[2,4] %>% format_p()`, estimated higher score in women). 
+
+Participants' self-assessed music production skill level was strongly related to performance on the music perception tests: those reporting they "have no skill" performed far worse on the listening tasks than those reporting being "experts" (Cohen's $d =$ `r signif(cohens_ds_musskill_15[4,], 3) %>% abs()`; \textit{Figure 2A}), and the magnitude of this difference between "no skill" and "expert" was similar when considering women and men separately (Cohen's $d =$ `r signif(cohens_ds_musskill_15_women[4,], 3) %>% abs()` and  $d =$ `r signif(cohens_ds_musskill_15_men[4,], 3) %>% abs()`, respectively). Similarly, the degree of formal music training, as measured by self-reported participation in music theory classes, was highly related to performance on the tests for both men and women (\textit{Figure 2B}); overall, those who self-reported that they had \textit{"a lot of music theory training"} scored higher than those with \textit{"no theory training"} (Cohen's $d =$ `r signif(cohens_d_theory_lessons[4,], 2) %>% abs()` globally; $d$ = `r cohens_d_theory_lessons_men[4,] %>% round(digits = 3) %>% abs()` for men, $d$ = `r cohens_d_theory_lessons_women[4,] %>% round(digits = 3) %>% abs()` for women). 
+
+```{r table1, results = "asis"}
+var_ratio_tojoin <- var_ratio %>%
+  full_join(var_ratio_so_us) %>%
+  full_join(var_ratio_so_uk) %>%
+  full_join(var_ratio_tml_rep) %>%
+  select(data, DV, ratio)
+
+effectsizes_all <- effectsizes %>%
+  filter(DV != "multivariate") %>%
+  mutate(across(-DV, ~as.numeric(.x))) %>%
+  mutate(DV = ifelse(DV == "mpt_ability", "mpt", 
+                     ifelse(DV == "mdt_ability", "mdt", 
+                            ifelse(DV == "cabat_ability", "cabat", "mus_ability")))) %>%
+  mutate(data = "main") %>%
+  full_join(effectsizes_us) %>%
+  full_join(effectsizes_uk) %>%
+  full_join(effectsizes_tml_rep) %>%
+  full_join(var_ratio_tojoin) %>%
+  select(data, everything())
+
+effectsizes_all %>%
+  filter(data == "main") %>%
+  select(-data) %>%
+  mutate(across(c(eta_sq, R2), round, 5)) %>% # these two rounded to 4 decimal points to show not = 0
+  mutate(across(c(cohens_d, pct_overlap, prob_superior, BayesFactor), round, 3)) %>%
+  mutate(across(c(BayesFactor), formatC, format = "e", digits = 2)) %>% # scientific notation
+  # rename variable names
+  mutate(DV = ifelse(DV == "mpt", "Mistuning Perception", 
+                     ifelse(DV == "mdt", "Melodic Discrimination", 
+                            ifelse(DV == "cabat", "Beat Alignment", 
+                                   "General Music Perception Ability")))) %>%
+  kable(.,
+        format = "latex",
+        booktabs = TRUE,
+        escape = F,
+        col.names = c("Task", "Cohen's D", "\\% Overlap", "Probability Superior", "$\\eta^2$", "$R^2$", "Bayes Factor", "Variance Ratio (m/f)")) %>%
+        footnote(general = "Note: Negative Cohen's D values indicate that men's scores are higher, and positive scores that women's scores are higher.",
+           general_title = "Table 1 | Differences in male vs female music perception ability, quantified with a variety of effect size metrics",
+           footnote_as_chunk = TRUE,
+           title_format = "bold",
+           escape = FALSE,
+           threeparttable = TRUE) %>%
+  column_spec(column = 1, width = "1.45in") %>%
+  column_spec(column = 2:8, width = "0.55in") %>%
+  kable_styling(position = "center", 
+                latex_options = "hold_position") 
+```
+
+```{r effect sizes with covariates, eval = FALSE, results = "asis"}
+p_esq <-  map_dfr(vars, function(v) effectsize::eta_squared(lm(as.formula(sprintf(" %s ~ gender_n + mus_train + mus_listen  + age + education_n+ lessons_age_n", v)), data = c_dat))[1,"Eta2_partial"] %>% broom::tidy())
+r2 <- map_dfr(vars, function(v) summary(lm(as.formula(sprintf(" %s ~ gender_n + mus_train + mus_listen  + age + education_n+ lessons_age_n", v)), data = c_dat))$r.squared %>% broom::tidy())
+
+
+out <- data.frame(DV=vars, p_eta_sq_gender=p_esq$x, R2_full_model=r2$x)
+```
+
+We also asked whether performance on the music perception tests might have been driven by participant covariates beyond their sex, and whether adjusting for these covariates changes the estimated magnitude of a sex difference. We used factor analysis to aggregate participant responses to questions concerning their musical skill, training, and listening habits (for details about factors, see \textit{Methods, \& Table 4}). We then repeated the main analyses while adjusting for participants' age, education, age of start of music training (if any), and the above factors. The inclusion of these covariates did not substantially alter any effect sizes of sex differences (\textit{SI Table 2}). Further analyses using structural equations modelling approaches yielded comparable results (see \textit{Analysis \& SI Figure 1}).
+
+## Negligible sex differences hold across three replication studies
+
+The male skew of the initial participant sample (`r (n_male*100 / (n_male + n_female)) %>% round(1)`% male) could indicate a difference in how men and women self-selected into the study, which may have created a confound to our estimation of sex differences. Indeed, anecdotally, we noted that large spikes in website traffic temporally coincided with social media attention from YouTube, Twitch, and Reddit, the latter platform having a notably male-skewed audience [@Barthel2016]. We tested whether a different recruitment strategy would lead to different conclusions about sex differences on the music perception tests. We recruited additional participants in the United States (Replication 1) and the United Kingdom (Replication 2), each balanced on gender and stratified by age and education (see Methods, Table 3), who then took the same tests as the participants in the main study. Additionally, in the time since the original data analysis, the gamified test continued to accumulate participants, after the initial wave of social media attention to the game. We pre-registered the analysis of the replication data (Replication 3; repregistration available at https://osf.io/aczdv/overview?view_only=06b3e339de4a4621b8b9f6bb3de4f7d6).
+
+If there had been a large self-selection effect in the first, main sample that confounded the original estimate of sex differences in music perception ability, the estimated sex differences in these replication sample would be substantially different to the original estimate. This was not the case. Just as in the original citizen-science sample, the sample of `r n_us_f + n_us_m` US participants that were externally recruited and demographically balanced (Replication 1) displayed a pattern of small sex differences in the three tests and aggregate general musical perception ability score (`r min(effectsizes_us$cohens_d) %>% round(digits = 3) %>% abs()` < |Cohen's $d$| < `r max(effectsizes_us$cohens_d) %>% round(digits = 3) %>% abs()`), with inconsistent directions and low Bayes Factors (\textit{Figure 1F, Table 2}). 
+
+Replication 2 afforded us a second country replication with this age-, gender-, and education-stratified participant sampling method. Here, too, we found that these `r n_uk_m + n_uk_f` United Kingdom male and female participants showed small differences in the three tests and aggregate general music perception ability (`r min(effectsizes_uk$cohens_d) %>% round(digits = 3) %>% abs()` < |Cohen's $d$| < `r max(effectsizes_uk$cohens_d) %>% round(digits = 3) %>% abs()`; \textit{Figure 1G, Table 2}), consistent with the original study, and Replication 1.
+
+In Replication 3's additional `r n_tml_rep_f + n_tml_rep_m` participants (n = `r n_tml_rep_f` women, n = `r n_tml_rep_m` men), we observed a pattern of small sex differences in inconsistent directions (see _Figure 1, Table 1_), in line with the main finding and Replications 1 and 2. The sex difference in aggregate music perception ability was estimated to be d = `r effectsizes_tml_rep$cohens_d[4] %>% round(digits = 3)`, (men scoring higher), aggregating minimal differences for mistuning perception (Cohen's d = `r effectsizes_tml_rep$cohens_d[1] %>% round(digits = 3)`, women scoring higher), melodic discrimination (Cohen's d = `r effectsizes_tml_rep$cohens_d[2] %>% round(digits = 3)`, men scoring higher), and beat perception (Cohen's d = `r effectsizes_tml_rep$cohens_d[3] %>% round(digits = 3)`, men scoring higher).
+
+```{r US_mistuning}
+dat_us_mpt <- dat_soundout %>%
+  filter(country == "United States") %>%
+  mutate(gender = as.factor(gender),
+         workspace = ifelse(is.na(workspace), "NA", workspace), 
+         workspace = as.factor(workspace), 
+         workspace =  fct_relevel(workspace, "NA", "I am in a very noisy place", "I am in a somewhat noisy place", "I am in a somewhat quiet place", "I am in a very quiet place"), 
+         music_lessons = as.factor(music_lessons),
+         lessonsTime = ifelse(is.na(lessonsTime), "NA", lessonsTime), 
+         lessonsTime = fct_relevel(lessonsTime, "NA", "Less than a year", "1-2 years", "2-4 years", "4-6 years", "6-10 years", "More than 10 years"),
+         education = as.factor(education), 
+         education = fct_relevel(education, "Other ", "Some elementary", "Completed elementary", "Some high school", "Completed high school", "Some undergrad", "Completed undergrad degree", "Some graduate school", "Completed graduate school")) %>%
+  filter(education != "Other ")
+
+mod_simple_us <- lm(mpt ~ gender, data = dat_us_mpt)
+summary(mod_simple_us)
+mod_simple_us_eta <- effectsize::eta_squared(mod_simple_us)
+
+mod_full <- lm(mpt ~ workspace + age + lessonsTime + education + gender, data = dat_us_mpt)
+
+summary(mod_full)
+mod_full_eta <- effectsize::eta_squared(mod_full)
+
+colin <- vcov(mod_full) %>% cov2cor() %>% tibble()
+
+```
+
+## Age, education, musical training, environmental noise, and country explain more score variance than sex
+To contextualize how small the influence participant gender was on music perception abilities, we took the largest effect size in any of the samples we tested - the Cohen's $d$ of `r effectsizes_us %>% filter(DV == "mpt") %>% select(cohens_d) %>% pull() %>% round(digits = 3)` in Replication 1 US participants' scores on mistuning perception - and fit an additional linear model that computed this effect size after accounting for participant age, education, musical training, and noisiness of the environment in which they completed the task (i.e. a 5-point scale ranging from _"I am in a very quiet place"_ to _"I am in a very noisy place"_). In the simple model that fits test scores simply as a factor of gender, this Cohen's d of `r effectsizes_us %>% filter(DV == "mpt") %>% select(cohens_d) %>% pull() %>% round(digits = 3)` corresponds to an $\eta^2 =$ `r mod_simple_us_eta$Eta2 %>% round(digits = 3)`. In a model with the above covariates, this drops slightly to $\eta_p^2 =$ `r mod_full_eta[mod_full_eta$Parameter == "gender",]$Eta2_partial %>% round(digits = 3)`, which is smaller than the variance explained by any of the other individual factors: we observed larger partial $\eta$s for self-reported noisiness of the space in which the participant completed the test ($\eta_p^2 =$ `r mod_full_eta[mod_full_eta$Parameter == "workspace",]$Eta2_partial %>% round(digits = 3)`), age ($\eta_p^2 =$ `r mod_full_eta[mod_full_eta$Parameter == "age",]$Eta2_partial %>% round(digits = 3)`), education ($\eta_p^2 =$ `r mod_full_eta[mod_full_eta$Parameter == "education",]$Eta2_partial %>% round(digits = 3)`), and years of music training ($\eta_p^2 =$ `r mod_full_eta[mod_full_eta$Parameter == "lessonsTime",]$Eta2_partial %>% round(digits = 3)`). Even in the largest sex difference we observed across four participant samples (main study and three replications), sex accounted for a vanishingly small amount of variance. 
+
+```{r table_replications, results = "asis"}
+effectsizes_all %>%
+  filter(data != "main") %>%
+  mutate(across(c(eta_sq, R2), round, 5)) %>% # these two rounded to 4 decimal points to show not = 0
+  mutate(across(c(cohens_d, pct_overlap, prob_superior, BayesFactor), round, 3)) %>%
+  mutate(across(
+    c(BayesFactor), 
+    ~ ifelse(data == "Replication 3 (global, n = 334,703)", formatC(.x, format = "e", digits = 2), BayesFactor))) %>% # scientific notation
+  # rename variable names
+  mutate(DV = ifelse(DV == "mpt", "Mistuning Perception", 
+                     ifelse(DV == "mdt", "Melodic Discrimination", 
+                            ifelse(DV == "cabat", "Beat Alignment", 
+                                   "General Music Perception Ability")))) %>%
+  kable(.,
+        format = "latex",
+        booktabs = TRUE,
+        escape = F,
+        col.names = c("Data", "Task", "Cohen's D", "\\% Overlap", "Probability Superior", "$\\eta^2$", "$R^2$", "Bayes Factor", "Variance Ratio (m/f)")) %>%
+        footnote(general = "Across three replication studies, we continue to see a pattern of functionally negligible sex differences in music perception abilities. Negative Cohen's D values indicate that men's scores are higher, and positive scores that women's scores are higher.",
+           general_title = "Table 2 | Effect sizes across three replication studies",
+           footnote_as_chunk = TRUE,
+           title_format = "bold",
+           escape = FALSE,
+           threeparttable = TRUE) %>%
+  column_spec(column = 1, width = "0.8in") %>% 
+  column_spec(column = 2, width = "1.5in") %>%
+  column_spec(column = 3:9, width = "0.4in") %>%
+  kable_styling(position = "center", 
+                latex_options = c("hold_position")) %>%
+  collapse_rows(columns = 1)
+```
+
+```{r country_distribution, results='hide'}
+tml_all <- dat %>%
+  mutate(gender = gender_n) %>%
+  filter(gender %in% c("Male", "Female")) %>%
+  full_join(dat_tml_rep) %>%
+  mutate(country = ifelse(country == "Kingdom of the Netherlands", "The Netherlands", country),
+         country = ifelse(country == "New Zealand", "Aotearoa New Zealand", country)) %>%
+  mutate(lessonsTime = factor(lessonsTime, c(NA, "Less than a year", "1-2 years", "2-4 years", "4-6 years", 
+                                             "6-10 years", "More than 10 years")))
+
+countries_diff <- tml_all %>%
+  select(country, gender, user_id, mus_ability) %>%
+  filter(gender %in% c("Female", "Male")) %>%
+  group_by(country) %>%
+  mutate(n = n()) %>%
+  filter(n > 1000) %>%
+  group_by(country, gender) %>%
+  summarise(mus_mean = mean(mus_ability)) %>% 
+  pivot_wider(names_from = gender, values_from = mus_mean) %>%
+  mutate(diff = Female - Male) 
+country_mean <- mean(countries_diff$diff) %>% round(digits= 3)
+country_sd <- sd(countries_diff$diff) %>% round(digits = 3)
+countries_diff_ttest <- t.test(countries_diff$diff) %>% broom::tidy()
+
+# cohen d per country
+countries_d <- tml_all %>%
+  select(country, gender, user_id, mus_ability) %>%
+  group_by(country) %>%
+  mutate(n = n()) %>%
+  filter(n > 1000, 
+         gender %in% c("Female", "Male")) %>%
+  group_by(country) %>%
+  summarise(cohen_d = effectsize::cohens_d(mus_ability ~ gender)) %>%
+  tidyr::unpack(cols = cohen_d)
+
+mod_simple <- fit_or_load("mod_simple", function() lm(mus_ability ~ gender, data = tml_all))
+mod_simple_tidy <- mod_simple %>% glance()
+mod_simple_eta <- fit_or_load("mod_simple_eta", function() effectsize::eta_squared(mod_simple)) 
+
+mod_country <- fit_or_load("mod_country", function() lm(mus_ability ~ gender + country, data = tml_all)) 
+mod_country_tidy <- mod_country %>% glance()
+mod_country_eta <- fit_or_load("mod_country_eta", function() effectsize::eta_squared(mod_country)) 
+
+mod_4 <- fit_or_load("mod4", function() lm(mus_ability ~ gender + country + age + lessonsTime, tml_all))
+mod_4_tidy <- mod_4 %>% glance()
+mod_4_eta <- fit_or_load("mod_4_eta", function() effectsize::eta_squared(mod_4)) 
+```
+
+```{r fig_country, results = 'asis', fig.show="hold", out.width="100%", fig.height = 8, fig.cap = paste("\\textbf{Fig. 3 | Per-country variation in sex differences clusters around 0.} Only displaying countries with n > 1000 participants. \\textbf{A} Per-country distributions of male and female participants' scores on general music perception ability, visualized as density plots, ordered by direction and magnitude of sex difference in mean score. \\textbf{B} For these same countries, equivalent Cohen's d that describe the sex difference in these distributions, in the same order as in \\textbf{A}, with whiskers marking 95% confidence intervals. For voice differences, the range marked are minimum and maximum Cohen's ds on various acoustic features (from Puts et al., 2011). For height difference, only a point estimate was available (from Lippa et al., 2009).")}
+
+countries_dist_ridge <- tml_all %>%
+  select(mus_ability, country, gender) %>%
+  group_by(country) %>%
+  dplyr::mutate(n = n()) %>%
+  dplyr::filter(n > 1000,
+         gender %in% c("Female", "Male")) %>%
+  left_join(countries_diff) %>%
+  select(country, diff, mus_ability, gender) %>%
+  ungroup() %>%
+  add_row(country = "placeholder", diff = 1, mus_ability = NA, gender = NA) %>%
+  add_row(country = "placeholder2", diff = 2, mus_ability = NA, gender = NA) %>%
+  ggplot(aes(x = mus_ability, y = fct_reorder(country, diff, .desc = FALSE), color = gender)) + 
+  geom_density_ridges_gradient(
+    scale = 3, 
+    rel_min_height = 0.001, 
+    fill = NA
+  ) + 
+  scale_color_manual(values = c("Male" = "#008B8B", "Female" = "#C71585")) +
+  theme_ridges() +
+  xlim(-2, 2) + 
+  labs(x = "General music perception ability (g)", 
+       y = element_blank()) + 
+  scale_y_discrete(
+    labels = function(x) ifelse(x %in% c("placeholder", "placeholder2"), "", x)
+  ) +
+  theme_classic() +
+  theme(strip.background = element_blank(), 
+        legend.position = "none",
+        # margin so cowplot labels don't plot over graph
+        plot.margin = margin(t = 20, r = 5, b = 5, l = 5)) + 
+  annotate("text", x = 2, y = "Georgia", label = "0", fontface = "bold", size = 3) + 
+  annotate("text", x = 1.8, y = "Belgium", label = "larger male advantage", angle = 90) + 
+  annotate("text", x = 1.8, y = "Austria", label = "larger female advantage", angle = 90) + 
+  annotate("segment", 
+           x = 2, xend = 2, 
+           y = "Vietnam", yend = "Iran", 
+           arrow = arrow(length = unit(0.3, "cm"), type = "closed"),
+                                color = "black", linewidth = 0.5) + 
+  annotate("segment", 
+           x = 2, xend = 2,
+           y = "Malaysia", yend = "Lithuania",
+           arrow = arrow(length = unit(0.3, "cm"), type = "closed"),
+                                color = "black", linewidth = 0.5) + 
+  annotate("text", x = 1, y = "placeholder2", label = "Female", color = "#C71585", size = 2.5) + 
+  annotate("text", x = -1, y = "placeholder2", label = "Male", color = "#008B8B", size = 2.5)
+
+gg_country_cohen_rotate <- countries_d %>%
+  full_join(countries_diff) %>%
+  add_row(country = "vocal differences", Cohens_d = 4.2, CI_low = 2.7, CI_high = 5.7) %>%
+  add_row(country = "height difference", Cohens_d = 1.63, CI_low = NA, CI_high = NA) %>%
+  mutate(country = fct_relevel(country, "vocal differences", "height difference"),
+         outside_example = ifelse(country %in% c("vocal differences", "height difference"),
+                                  as.character(country), 
+                                  "current")) %>%
+  ggplot(aes(x = Cohens_d, y = fct_reorder(country, diff, .desc = FALSE), color = outside_example)) + 
+  geom_point() + 
+  geom_errorbar(
+    aes(xmin = CI_low, 
+        xmax = CI_high), 
+    width = 0.3) + 
+  theme_classic() + 
+  labs(x = "Sex difference (Cohen's d)", 
+       y = element_blank()) + 
+  scale_color_manual(
+    values = c(
+    "vocal differences" = "#3cd070", 
+    "height difference" = "#3cd070",
+    "current" = "grey6"
+  )) + 
+  theme(legend.position = "none",
+        plot.margin = margin(t = 20, r = 5, b = 5, l = 5)) + 
+  scale_y_discrete(labels = element_blank()) + 
+  annotate("text", x = 4.2, y = "Poland", label = "vocal acoustics", fontface = "bold", size = 5, color = "#3cd070") + # y = 3
+  annotate("text", x = 1.63, y = "Lithuania", label = "height", fontface = "bold", size = 5, color = "#3cd070") + # y = 4
+  annotate("text", x = 2, y = 40, label = "music perception ability (g)", fontface = "bold", size = 3, color = "black") +
+  geom_vline(xintercept = 0, linetype = "dashed")
+
+cowplot::plot_grid(countries_dist_ridge, gg_country_cohen_rotate, 
+          ncol = 2, labels = c("A", "B"),
+          rel_widths = c(1/2, 1/2),
+          label_y = 1, vjust = 1.5) %>%
+  ggdraw()
+
+
+```
+
+Last, we asked how uniform this sex difference was, globally. We re-calculated the magnitude of the sex difference on general music perception ability _within each country_. We pooled the main study and direct replication data (Replication 3; for a total n = `r tml_all %>% nrow()` from `r length(unique(tml_all$country))` countries), and filtered the data to retain countries with large sample sizes ($n \geq$ 1000) to build well-sampled distributions of test scores. Of these `r length(countries_d$country)` countries, we computed per-country average sex differences in general music perception ability, and Cohen's d effect sizes for these differences. Despite that listeners from different countries differ in test performance (possibly due to differences in familiarity to Western music styles in the test stimuli; see below), the magnitude of estimated sex differences in general musical perception ability appeared highly similar across countries, with the distribution of average test score differences overlapping with 0 (mean score difference = `r country_mean`, sd = `r country_sd`, $t=$ `r countries_diff_ttest$statistic %>% round(digits = 3)`, $p=$ `r countries_diff_ttest$p.value %>% round(digits = 3)`; mean Cohen's d  = `r mean(countries_d$Cohens_d) %>% round(digits = 3)`; \textit{Figure 3}), and orders of magnitude smaller than cross-cultural estimations of average sex differences in known sexual dimorphisms, such as height [@Lippa2009] or vocal acoustics [@Puts2011] (\textit{Figure 3B}).  
+
+Moreover, the effect of country was orders of magnitude larger than the observed sex differences. We ran linear models that fit test scores using only sex information, or sex and country information. The latter model had better fit ($R^2$ of `r mod_simple_tidy$adj.r.squared %>% round(digits = 6)` and `r mod_country_tidy$adj.r.squared %>% round(digits = 3)`, respectively), and in the latter model, the partial $\eta$ of sex ($\eta_p^2 (sex)=$ `r mod_country_eta[mod_country_eta$Parameter == "gender",]$Eta2_partial %>% round(digits = 5)`) was several orders of magnitude smaller than that of country ($\eta_p^2 (country)=$ `r mod_country_eta[mod_country_eta$Parameter == "country",]$Eta2_partial %>% round(digits = 3)`). 
+
+# Discussion
+Together, these findings provide no evidence for substantive sex differences in human music perception. Not only did the most general test of sex differences only find weak evidence for a sex difference (i.e. a negligible effect size, and a low Bayes Factor of 0.6), but the reliable sex differences we \textit{did} find were of a very small size and of inconsistent direction. This pattern held across three replication studies; in US and UK participant samples, where recruitment did not rely on organic social media "word of mouth"; and again in a large-scale direct replication.
+
+Those few reliable differences do not seem to support any claim of sexual selection, for two main reasons. First, human sex differences in traits argued to result from sexual selection tend to be large in size; some examples include height (Cohen's $d$ = 1.63)[@Lippa2009], vocal acoustic features (Cohen's $d$ = 2.7 - 5.7)[@Puts2011], and rates of engagement in physical aggression (Cohen's $d$ = 1.11)[@Archer2019]. These effects dwarf the sex differences we found on the three music tests. The small sex differences that we do observe appear easily overridden by factors like age, country, education, and simple self-reported noisiness of the environment in which one does a music listening test. 
+
+Second, large sex differences in perception have been observed in a variety of non-human animals that \textit{do} use acoustic signals for courtship and sexual behavior. Female black-capped chickadees (\textit{Poecile atricapillus}) outperform males on the discrimination of pitch ratios ($\eta_p^2=$ 0.163) [@Hoeschele2012], and are significantly faster than males at discriminating between socially dominant and subordinate male songs (Cohen's $d$ = 2.854) [@Hahn2017]; and only female Bengalese finches showed recognition of new males' songs (as seen in heart rate habituation) [@Ikebuchi2003]. Because in these species males and females often have categorically different behavioral responses to song, studies directly comparable to our own—where both males and females are presented with the same stimuli and assessed on the same behavioral assay—are sparse in the literature, and so there is little consensus as to whether these sex differences are strictly perceptual and/or motivational. While the exact mechanisms underlying these sex differences in non-humans animals' responses to these courtship signals is unclear, the magnitude of non-human animals' sex differences in these behavioral responses equally dwarf the human sex differences we found on the three music tests. 
+
+The lack of sex differences in music perception casts doubt on the mate quality hypothesis, but does not rule it out entirely. The ability to produce music requires complex sensory processing and sensorimotor integration; one can imagine unusual co-evolutionary dynamics at work, where music production is substantively dimorphic but music perception is not. We find this unlikely: in our data, self-reported music production skill was highly correlated with music perception ability in both males and females, suggesting there should be similarly small sex differences in music production skills. This is consistent with a large twin study finding no sex difference in singing abilities [@Yeom2022], and other work finding associations between music perception and production abilities [@DallaBella2017a; @Larrouy-Maestri2019; @Harrison2017; @Harrison2018]. While self-reports of music production ability are coarse measures relative to structured assessments of music production ability, we predict that future research using such tests will find comparably poor evidence for sexual dimorphism in musicality, and, therefore, little support for the sexual selection theory of the evolution of musicality.  
+
+\bigskip
+
+# Methods
+
+This research was approved by the Harvard University Committee on the Use of Human Subjects (protocol 2000033433) and Yale University's Human Research Protection Program (protocol 2000033433). Data were collected via an online experiment hosted at \url{https://www.themusiclab.org/quizzes/miq} which was advertised as a "Test Your Musical IQ" game. 
+
+## Participants
+
+## Main Study
+Recruitment was driven by organic social media sharing, which lead to the gamified experiment reaching `r n_total` participants from `r n_country` countries. The first round of data collection was gathered between 22 Nov 2019 and 14 Dec 2020.
+Included in this dataset are only individuals who self-reported that they had not taken the test before and did not have a hearing impairment.
+Of these, n = `r n_female` (`r round((n_female/n_total)*100, digits = 1)`%) self-identified as "female", n = `r n_male` (`r round((n_male/n_total)*100, digits = 1)`%) self-identified as "male" and n = `r n_other` (`r round((n_other/n_total)*100, digits = 1)`%) indicated "other" for their gender.
+Because sexual selection theory does not make explicit predictions with regards to how non-binary participants may differ from men and women, we only used data from participants who self-identified as either male or female.
+While individuals from over 200 countries participated in the test, the majority of participants were from North America (`r n_northamer`, or `r round((n_northamer/n_total), digits = 3)*100`%) and Europe (`r n_europe`, or `r round((n_europe/n_total), digits = 3)*100`%).
+Further information about participants' age and educational achievement is detailed in Table 3 and SI Table 1.
+
+## Replication Studies 1 & 2
+We worked with SoundOut, a third-party collaborator that specialises in commercial music testing, to build participant samples for the US and the UK, with each sample balanced on numbers of men and women, and men and women in each sample balanced on age and education (see \textit{Table 3}). Their responses to the demographic portion of our study indicated that they were also balanced on musical education. Of the target n = 1000 per country, n = `r n_us_f + n_us_m` (`r n_us_f` female, `r n_us_m` male) from the US and n = `r n_uk_f + n_uk_m` (`r n_uk_f` female, `r n_uk_m` male) from the UK provided complete data, reported that they had not taken the test before, and had no hearing impairments. 
+
+## Replication Study 3
+In the time since the original analysis of the data and conducting the above replication studies, the original test hosted on <https://www.themusiclab.org/> continued to organically accumulate participants. This allowed us to conduct a third replication study, this one a direct replication of the main finding. These data (collected 14 Dec 2020 to 09 March 2026) form a sample of an additional n = `r dat_tml_rep %>% nrow()` from `r length(unique(dat_tml_rep$country))` countries. These participants completed the same tests as the original sample and Replication Studies 1 and 2, and were identically filtered on age (retaining those who self-reported an age between 7-100), having self-reported never taken the test before, and self-reported having no hearing impairments. 
+
+```{r table_participants, results = "asis"}
+dat_participants <- dat %>%
+  filter(gender_n %in% c("Male", "Female")) %>%
+  group_by(gender_n) %>% 
+  summarise(N = n(),
+            age_mean = round(mean(age), digits = 1), 
+            music_lessons_n = round(mean(music_lessons_n, na.rm = TRUE), digits = 2)*100,
+            music_lessons_n = paste0(music_lessons_n, "\\%"),
+            lessons_age = round(mean(lessons_age, na.rm = TRUE), digits = 1),
+            education = round(mean(education_n, na.rm = TRUE), digits = 1)) %>%
+  mutate(data = "Original")
+dat_soundout_participants <- dat_soundout %>%
+  filter(!is.na(gender)) %>%
+  mutate(data = ifelse(country == "United States", "Replication 1 (US)", "Replication 2 (UK)"),
+         music_lessons = ifelse(music_lessons == "Yes", 1, 0),
+         education = case_when(
+           education == "Some elementary" ~ 1L, 
+           education == "Completed elementary" ~ 2L,
+           education == "Some high school" ~ 3L,
+           education == "Completed high school" ~ 4L,
+           education == "Some undergrad" ~ 5L,
+           education == "Completed undergrad degree" ~ 6L,
+           education == "Some graduate school" ~ 7L, 
+           education == "Completed graduate school" ~ 8L,
+           education == "Other" ~ NA)) %>%
+  group_by(data, gender) %>%
+  summarise(N = n(),
+            age_mean = round(mean(as.numeric(age), na.rm = TRUE), digits = 1),
+            music_lessons_n = round(mean(music_lessons, na.rm = TRUE), digits = 2)*100,
+            music_lessons_n = paste0(music_lessons_n, "\\%"),
+            lessons_age = round(mean(as.numeric(lessonsAge), na.rm = TRUE), digits = 1),
+            education = round(mean(education, na.rm = TRUE), digits = 1)) %>%
+  rename(gender_n = gender)
+
+dat_tml_rep_participants <- dat_tml_rep %>%
+  filter(gender %in% c("Male", "Female")) %>%
+  group_by(gender) %>%
+  mutate(music_lessons = ifelse(musicLessons == "Yes", 1, 0)) %>%
+  summarise(N = n(),
+            age_mean = round(mean(age, na.rm = TRUE), digits = 1),
+            music_lessons_n = round(mean(music_lessons, na.rm = TRUE), digits = 2)*100,
+            music_lessons_n = paste0(music_lessons_n, "\\%"),
+            lessons_age = round(mean(as.numeric(lessonsAge), na.rm = TRUE), digits = 1),
+            education = round(mean(education, na.rm = TRUE), digits = 1)) %>%
+  mutate(data = "Replication 3 (global)") %>%
+  rename(gender_n = gender)
+
+all_four <- bind_rows(dat_participants, dat_soundout_participants, dat_tml_rep_participants) %>%
+  select(data, gender_n, everything()) %>%
+  mutate(data = factor(data, levels = c("Main study", "Replication 1 (US)", "Replication 2 (UK)", "Replication 3 (global)")))
+
+all_four %>%
+  janitor::clean_names() %>%
+  kable(.,
+        format.args = list(big.mark = ","), # 1000 comma separator
+        format = "latex",
+        booktabs = TRUE,
+        col.names = c("Dataset", "Gender", "n", "Mean Age (years)", "Music Lessons", "Age Music Lessons Started", "Education"),
+        escape = FALSE, 
+        linesep = "", # "\\addlinespace"
+        longtable = FALSE,
+        align=rep('l', 7))  %>%
+        footnote(general = "Participant information, broken down by self-reported gender, age, education, and music lessons. `Music Lessons` was a binary question asking whether participants had ever had music lessons or not. `Age Music Lessons Started` asked, of those participants that had had lessons, when they started. `Education` answers ranged from `Some elementary school` (scored 1) to `Completed graduate school` (scored 8); the average education levels in these populations are between `Some undergrad` (scored 5) and `completed undergrad degree` (scored 6).",
+           general_title = "Table 3 | Participants",
+           footnote_as_chunk = TRUE,
+           title_format = "bold",
+           escape = FALSE,
+           threeparttable = TRUE) %>% 
+  column_spec(column = 1, width = "1.5in") %>%
+  column_spec(column = 3, width = "0.7in") %>%
+  column_spec(column = 4, width = "0.5in") %>%
+  column_spec(column = 5, width = "0.6in") %>%
+  column_spec(column = 6, width = "0.6in") %>%
+  column_spec(column = 7, width = "0.6in") %>%
+  collapse_rows(columns = 1, 
+    latex_hline = "none") 
+
+```
+
+## Measures of music-perceptual abilities
+
+Participants completed three musical perception-based tests, each of which were based on prior work. These tests used an explanatory item response theory model and were adaptive. Each of the three tests was 15 items long, and the adaptive nature of the tests allows the procedure to select items dynamically such that item difficulty is matched to estimated participant ability for each trial. The exact 15 items (per test) that participants heard therefore varied according to their test performance. Validation for item difficulty, algorithms for item difficulty selection, and scoring calculations are reported in the original papers that validated these tasks. Final participant scores, per test, are computed according to the underlying item response theory model and have a theoretical range from -4 to 4, with higher scores indicating greater ability.
+These tests measures participants' abilities in the following domains:\
+
+i)  Melodic discrimination [@Harrison2017]: Participants listen to three different versions of the same melody.
+    All three versions are played at different absolute pitch levels, with subsequent versions always transposed a semitone higher compared to the previous version.
+    Two versions are identical in their interval structure but one of the three versions differs in one note.
+    Differences can be in melodic interval, contour or tonality or any combination of the three factors.
+    The participant's task is to identify the odd-one-out. 
+    Melodies were synthesized using MIDI with a piano timbre; they varied in length, ranging between 6-16 notes depending on difficulty level; and were all presented at 120 beats per minute. \
+
+ii) Mistuning perception [@Larrouy-Maestri2019]: Participants are given two nearly identical short excerpts of vocal music.
+    In one excerpt the vocal track was pitch-shifted against the instrumental backtrack; the participant's task is to indicate in which of the two excerpts the singer sounds more out of tune. Of the 45 items in this test, 26 had male vocalists. For each item, de-tuned versions were generated with pitch-shifts ranging from 10-100 cents (in 5 cent increments; 100 cents corresponds to one semitone), thus generating item pairs of different difficulty levels. \
+
+iii) Beat alignment [@Harrison2018]: Participants listen to the same clip of music twice, with an overlaid beep track.
+     In one version the beep track is perfectly aligned with the musical beat of the music, and in the other version the beep track is slightly shifted in time. The beep track was offset from the musical beat by a constant proportion of the musical beat, that ranged 0 < P $\leq$ 0.5. A deviation if 0.5 indicates a maximum deviation of being half a beat misaligned with the musical beat, thus creating the easiest items to discriminate against the clip with the perfectly aligned beep track. The beep track could be misaligned from the musical beat by being ahead of or behind the musical beat. 
+     The participant's task is to identify in which of the two clips the beep track is best aligned with the beat of the music. \
+
+The music consisted of excerpts of Western popular music, i.e., music in a style that would be familiar to listeners acculturated to Western music, but not songs that they were likely to have heard before; all stimulus materials were sourced from stock libraries containing only songs that have not been commercially released. While our tests consisted only of musical excerpts in the Western musical tradition, because men and women from all geographic regions participated in the study, this test remains useful for quantifying sex differences around the world; any culture-driven differences in performance would apply equally to both men and women, and therefore are unlikely to confound the presently reported findings. 
+
+## Procedure
+
+Participants completed the experiment on computers, smartphones, or tablets. Participants were first asked to report their age, country, self-identified gender, native language, and whether they had a hearing impairment. They were also asked about the noisiness of the environment in which they were at the time of the experiment, whether they were wearing headphones, and if they had taken the test before. Participants then completed the three music perception tests, in a randomized order. After the tests, they were asked a number of questions concerning their musical skill and experience (see \textit{SI Table 3}). 
+
+## Analysis
+
+### Data pre-processing
+
+Of the \>2 million people who had begun the online experiment at https://www.themusiclab.org/miq between 22 Nov 2019 and 14 Dec 2020 (main study), we considered only those who had completed all three musical perception tests, only analyzed the data from participants who self-reportedly had not taken the test before, and excluded participants who reported an age younger than 7 or older than 100. Applying these filters resulted in the main study's participant sample of n = `r n_total`. 
+Questions that had written response labels were re-coded into binary or ordinal variables (see \textit{SI Table 3});
+these items formed conceptually meaningful groups: items pertaining to \textit{i)} musical perception ability (ie. the three musical perception tests), \textit{ii)} self-reported musical ability, \textit{iii)} formal musical training, and \textit{iv)} extent, intensity, and breadth of musical listening. 
+These same data pre-processing steps were to the three replication datasets.
+
+### Factor analysis to extract composite scores
+
+For each of the above groups of measures, information from their constituent sources was aggregated by factor analysis.
+For each of these factor analyses, the data from the main study was randomly split into two equal sized subsamples.
+An exploratory minimum residual factor analysis was run on one subsample, with the correlation matrix of the variables belonging to the same conceptual group.
+Questions differed in their response options and, by extension, the measurement level of corresponding variables.
+In these cases a mixed-type correlation matrix was computed employing polychoric, tetrachoric, biserial, point-biserial or Pearson correlations as appropriate for each pair of questions.
+The resulting correlation matrix was then subjected to a factor analysis.
+In all cases only a single factor was specified and only variables that loaded with a minimum of 0.3 were retained in the factor model. For example, the variable for whether participants had had music lessons, which participants answer with a binary yes/no, was pruned due to being too coarse of a measure to capture variation in test scores; the "yes" answer to this item pools participants who only briefly had lessons with those who reported decades of training. Other factors pertaining to music training (i.e. whether participants enjoyed lessons, their self-assessment of skill relative to peers, and amount of music theory training, including "none") were found to load sufficiently onto the Musical Training factor.
+The second subsample was used for a confirmatory factor analysis and the factor structure was confirmed by inspecting measures of absolute model fit.
+On the condition that fit measures were satisfactory, the confirmatory factor model was then computed a second time, using the entire sample of participants, and factor scores were computed using only data from those participants with complete data on all the variables included in the factor model.
+We then used the Empirical Bayes Modal approach for computing factor scores from the confirmatory model.
+Table 3 details each factor's individual items, their loading on the factor, and how much variance among the indicators is explained by the single factor.
+For all factors, the confirmatory fit measures indicated a good model fit (General music perception ability RMSEA \< .001, SRMR, \< .001; self-reported musical ability RMSEA = 0.029, SRMR = 0.037; self-reported musical training RMSEA \< .001, SRMR, \< .001; self-reported musical listening RMSEA \< .001, SRMR, \< .001).
+
+```{r table_factor_analysis, results= "asis"}
+fa_ability <- stack(ef1_ability$loadings[1:3,]) %>% 
+  mutate(values = round(values, digits = 3)) %>%
+  mutate(factor = "Music ability") %>%
+  mutate(ind = ifelse(ind == "mpt_ability", "Mistuning Perception", 
+                      ifelse(ind == "mdt_ability", "Melodic Discrimination", 
+                             "Beat Alignment"))) %>%
+  mutate(var_explained = round(ef1_ability$Vaccounted[2], digits = 3))
+fa_sfabil <- stack(ef1_sfabil$loadings[1:4,]) %>% 
+  mutate(values = round(values, digits = 3)) %>%
+  mutate(factor = "Self-reported musical ability") %>%
+  mutate(ind = ifelse(ind == "music_tap_n", "Tap In Time", 
+                      ifelse(ind == "out_of_tune_n", "Out of Tune", 
+                             ifelse(ind == "music_skill_n", "Musical Skill", 
+                                    "Music Listening Skill")))) %>%
+  mutate(var_explained = round(ef1_sfabil$Vaccounted[2], digits = 3))
+fa_train <- stack(ef1_train$loadings[1:3,]) %>% 
+  mutate(values = round(values, digits = 3)) %>%
+  mutate(factor = "Musical Training") %>%
+  mutate(ind = ifelse(ind == "lessons_enjoy_n", "Enjoyed Lessons", 
+                      ifelse(ind == "lessons_peers_n", "Compared to Peers in Lessons", 
+                             "Theory Training"))) %>%
+  mutate(var_explained = round(ef1_train$Vaccounted[2], digits = 3))
+fa_listen <- stack(ef1_listen$loadings[1:3,]) %>% 
+  mutate(values = round(values, digits = 3)) %>%
+  mutate(factor = "Musical Listening") %>%
+  mutate(ind = ifelse(ind == "music_feel_n", "Music Enjoyment", 
+                      ifelse(ind == "music_listen_time_n", "Music Listening Time", 
+                             "Familiarity with World Music"))) %>%
+  mutate(var_explained = round(ef1_listen$Vaccounted[2], digits = 3))
+
+rbind(fa_ability, fa_sfabil, fa_train, fa_listen) %>%
+  dplyr::select(factor, ind, values, var_explained) %>%
+  dplyr::rename(item = ind, loading = values) %>%
+  janitor::clean_names() %>%
+  kable(.,
+        format = "latex",
+        booktabs = TRUE,
+        col.names = c("Factor", "Item", "Loading onto Factor", "Variance Explained"),
+        escape = FALSE, 
+        linesep = "\\addlinespace",
+        longtable = TRUE,
+        align=rep('l', 10))  %>%
+        footnote(general = "Aggregation of related items into factors, and individual items' loadings onto their factor. Factor analysis was applied to data from the main study.",
+           general_title = "Table 4 | Factor Analysis",
+           footnote_as_chunk = TRUE,
+           title_format = "bold",
+           escape = FALSE,
+           threeparttable = TRUE) %>%
+  collapse_rows() 
+```
+
+### Estimating sex differences in music perception 
+
+To test whether there were any sex differences in music perception in the main study, after controlling for the above participant covariates, we tested for sex differences using a sequence of different analysis approaches.
+
+First, a general additive model (GAM) was fit to each dependent variable, i.e., the three individual ability tests (melodic discrimination, mistuning perception, and beat alignment), and the aggregate factor score of general music perception ability. This allowed us to calculate means and variances of these variables and test whether they differed between men and women. 
+Men and women's distributions on each variable were plotted to visualize the extent of their overlap (\textit{Figure 1}). On the basis of these data, we also calculated the probability superior (the probability that a randomly selected woman would have a higher score than a randomly selected man), the $\eta^2$ of how much variance sex explains in the models, the ${R}^2$ of the models, and the variance ratios (variance men / variance women) (\textit{Table 1}).
+As a measure of effect size of a potential sex difference, we calculated Cohen's \textit{d} as a parametric effect size, and percentage overlap of the two distributions as a non-parametric effect size (\textit{Table 1}).  
+
+```{r Covariate adjustement, cache = TRUE}
+p_esq <-  map_dfr(vars, function(v) effectsize::eta_squared(lm(as.formula(sprintf(" %s ~ gender_n + mus_train + mus_listen  + age + education_n+ lessons_age_n", v)), data = c_dat))[1,"Eta2_partial"] %>% broom::tidy())
+r2 <- map_dfr(vars, function(v) summary(lm(as.formula(sprintf(" %s ~ gender_n + mus_train + mus_listen  + age + education_n+ lessons_age_n", v)), data = c_dat))$r.squared %>% broom::tidy())
+
+# out <- data.frame(DV=vars, p_eta_sq_gender=p_esq$x, R2_full_model=r2$x)
+# print(out)
+```
+
+```{r Latent variable difference via SEM, cache = TRUE}
+# Compare SEMs without covariates 
+m0 <- '
+  g =~ mpt_ability + mdt_ability + cabat_ability
+  mpt_ability ~ c(0,0)*1
+  
+  g ~ c(int_female,int_male)*1
+  diff:= int_female - int_male
+'
+
+lv_sex_diffs <- cfa(m0,data=c_dat,group = "gender_n", missing ="FIML", se="robust",group.equal=c("loadings","intercepts"))
+
+pars_0 <- parTable(lv_sex_diffs)
+lv_diff_0 <- pars_0[pars_0$lhs=="diff","est"] 
+n_f <- lavInspect(lv_sex_diffs,"nobs")[1]
+n_m <- lavInspect(lv_sex_diffs,"nobs")[2]
+var_g_f <- lavInspect(lv_sex_diffs, "cov.lv")$Female
+var_g_m <- lavInspect(lv_sex_diffs, "cov.lv")$Male
+S_0 <- sqrt(((n_f-1)*var_g_f+(n_m-1)*var_g_m)/(n_f+n_m+2))
+
+cohensd_lv_sex_diffs <- as.numeric(lv_diff_0 / S_0)
+
+#summary(lv_sex_diffs,fit.measures=T, standardized=T)
+
+# layout(t(1:2))
+# semPaths(lv_sex_diffs,intercepts=T, "eq", ask=F, intAtSide = T,"std",mar = c(8, 1, 5, 1))
+
+# Compare SEMs with covariates 
+m1 <- '
+  g =~ mpt_ability + mdt_ability + cabat_ability
+  mpt_ability ~ c(0,0)*1
+  g ~ mus_train + age + education_n +  mus_listen + lessons_age_n
+  
+  g ~ c(int_female,int_male)*1
+  diff:= int_female - int_male
+'
+
+lv_sex_diffs_covariates <- sem(m1,data=c_dat,group = "gender_n", missing ="FIML",group.equal=c("loadings","intercepts"))
+
+pars_1 <- parTable(lv_sex_diffs_covariates)
+lv_diff_1 <- pars_1[pars_1$lhs=="diff","est"] 
+n_f <- lavInspect(lv_sex_diffs_covariates,"nobs")[1]
+n_m <- lavInspect(lv_sex_diffs_covariates,"nobs")[2]
+var_g_f <- lavInspect(lv_sex_diffs_covariates, "cov.lv")$Female
+var_g_m <- lavInspect(lv_sex_diffs_covariates, "cov.lv")$Male
+S_1 <- sqrt(((n_f-1)*var_g_f+(n_m-1)*var_g_m)/(n_f+n_m+2))
+
+cohensd_lv_sex_diffs_covariates <- as.numeric(lv_diff_1 / S_1)
+
+#summary(lv_sex_diffs_covariates,fit.measures=T, standardized=T)
+
+# layout(t(1:2))
+# semPaths(lv_sex_diffs_covariates,intercepts=T, "eq", ask=F, intAtSide = T, "est",mar = c(8, 1, 5, 1))
+
+```
+
+Secondly, in order to further test whether men and women differed on this latent variable "general music perception ability" that summarizes the three musical perception tests, we computed structural equation models (SEMs) using the factor scores on the three perceptual tests as indicators of a latent variable general music perception ability (\textit{g}) (see \textit{SI Figure 1}).
+We constrained the intercepts and the loadings of the three tests on \textit{g} to be equal across men and women, tested the difference in the latent means of \textit{g} for significance, and computed Cohen's \textit{d} effect sizes.
+This model estimated that the difference in \textit{g} between men and women was `r lv_diff_0 %>% round(digits = 3)`, with a pooled variance of `r S_0 %>% round(digits = 3)`.
+This corresponds to an effect size of \textit{d} = `r cohensd_lv_sex_diffs %>% round(digits = 3)`, which is comparable to the above estimates derived from the GAM.
+
+### Controlling for participant covariates
+
+To test whether this magnitude of difference in \textit{g} may have been confounded by other participant variables in the main study, the above SEM was extended to include other participant variables that may have plausibly been influencing their test performance - specifically participants' age, education, age at which they started music lessons (if any), musical training, and musical listening. This SEM approach additionally allows us to model the correlational structure among the covariates (see \textit{SI Figure 1}). When taking covariate effects into account, the effect size increased slightly: the difference in \textit{g} after covariate adjustment was `r lv_diff_1 %>% round(digits = 3)`, with a pooled variance of `r S_1 %>% round(digits = 3)`.
+This corresponds to an effect size of $d =$ `r cohensd_lv_sex_diffs_covariates %>% round(digits = 3)`.
+This may reflect the influence of slight group differences on the above covariates.
+
+### Testing whether differences were robust across covariate subgroups
+
+Lastly, we tested whether the very small sex differences observed above, in the main study, were robust across different combinations of participants' covariates (namely: age, education, start age of music lessons, and factors musical training and musical listening).
+To do this, we used a tree model based on recursive partitioning.
+The tree model splits covariates into subgroups for which the coefficient for sex in a linear model changes significantly.
+Given our large sample size, we set a significance threshold of p \< .001 and required a minimum subgroup to have at least 1% of the total sample size.
+Tree models were automatically pruned using the Bayesian Information Criterion.
+We computed the range of the effect sizes (Cohen's \textit{d}) across subgroups for the tree model of each dependent variable.
+
+```{r Model-based recursive partitioning, cache = TRUE}
+c_dat_red <- na.omit(c_dat[,c("gender_n",vars, "age","education_n","mus_train","lessons_age_n","mus_listen")])
+
+mpt_abil_tree <- lmtree(mpt_ability ~ as.factor(gender_n) |   age + education_n+  mus_train + lessons_age_n + mus_listen, data = c_dat_red, minsize = n/100, alpha = 0.001, prune="BIC",cores=2)
+# plot(lmtree(mpt_ability ~ as.factor(gender_n) |   age + education_n+  mus_train + lessons_age_n + mus_listen, data = c_dat_red, minsize = n/100, alpha = 0.001,prune="BIC",cores=2,maxdepth=4,parm=2))
+range_mpt_abil <- range(coef(mpt_abil_tree)[,2] / sd(c_dat$mpt_abil))
+
+mdt_abil_tree <- lmtree(mdt_ability ~ as.factor(gender_n) |   age + education_n+  mus_train + lessons_age_n + mus_listen, data = c_dat_red, minsize = n/100, alpha = 0.001,prune="BIC", cores=2 )
+# plot(lmtree(mdt_ability ~ as.factor(gender_n) |   age + education_n+  mus_train + lessons_age_n + mus_listen, data = c_dat_red, minsize = n/100, alpha = 0.001,prune="BIC",cores=2,maxdepth=4,parm=2))
+range_mdt_abil <- range(coef(mdt_abil_tree)[,2] / sd(c_dat$mdt_abil))
+
+cabat_abil_tree <- lmtree(cabat_ability ~ as.factor(gender_n) |   age + education_n+  mus_train + lessons_age_n + mus_listen, data = c_dat_red, minsize = n/100, alpha = 0.001,prune="BIC",cores=2 )
+# plot(lmtree(cabat_ability ~ as.factor(gender_n) |   age + education_n+  mus_train + lessons_age_n + mus_listen, data = c_dat_red, minsize = n/100, alpha = 0.001,prune="BIC",cores=2,maxdepth=4,parm=2))
+range_cabat_abil <- range(coef(cabat_abil_tree)[,2] / sd(c_dat$cabat_abil))
+
+mus_abil_tree <- lmtree(mus_ability ~ as.factor(gender_n) |   age + education_n+  mus_train + lessons_age_n + mus_listen , data = c_dat_red, minsize = n/100, alpha = 0.001,prune="BIC",cores=2 )
+# plot(lmtree(mus_ability ~ as.factor(gender_n) |   age + education_n+  mus_train + lessons_age_n + mus_listen, data = c_dat_red, minsize = n/100, alpha = 0.001,prune="BIC",cores=2,maxdepth=4,parm=2))
+range_mus_abil <- range(coef(mus_abil_tree)[,2] / sd(c_dat$mus_ability))
+
+range <- rbind(range_mpt_abil, range_mdt_abil, range_cabat_abil, range_mus_abil)
+
+out_tree <- data.frame(DV=vars,cohens_d_lb=range[,1],cohens_d_ub=range[,2])
+# out_tree
+
+```
+
+Most of these tree models formed subgroups based on participants' amount of musical training and start age of music lessons.
+The range of effect sizes for sex across these tree model subgroups ranged from Cohen's \textit{d} = `r min(abs(out_tree %>% dplyr::select(cohens_d_lb, cohens_d_ub))) %>% round(digits = 3)` to `r max(abs(out_tree %>% dplyr::select(cohens_d_lb, cohens_d_ub))) %>% round(digits = 3)` (see \textit{SI Table 4} for ranges per test), this higher end representing effect sizes that are conventionally considered small effects (i.e. 0.2 \< _d_ \< 0.5) [@Cohen1988].
+Across these tree models, most models estimated a sex difference of Cohen's \textit{d} \< 0.2, and lower and upper bound for these estimates overlapped with 0 for mistuning perception, beat alignment, and general music perception ability. For melodic discrimination, the range of sex differences across these subgroups was [`r out_tree[2,2] %>% round(digits = 3)`; `r out_tree[2,3] %>% round(digits = 3)`], indicating a very small female advantage. Even when controlling for other participant variables, sex differences on the three tests, and general musical perception ability, are very small.
+
+```{r sex_diff_no_training}
+diff_no_train_mus <- c_dat %>%
+  filter(music_lessons_n == 0) %>%
+  summarise(cohen_d = effectsize::cohens_d(mus_ability ~ gender_n)) %>%
+  tidyr::unpack(cols = cohen_d)
+diff_no_train_mpt <- c_dat %>%
+  filter(music_lessons_n == 0) %>%
+  summarise(cohen_d = effectsize::cohens_d(mpt_ability ~ gender_n)) %>%
+  tidyr::unpack(cols = cohen_d)
+diff_no_train_mdt <- c_dat %>%
+  filter(music_lessons_n == 0) %>%
+  summarise(cohen_d = effectsize::cohens_d(mdt_ability ~ gender_n)) %>%
+  tidyr::unpack(cols = cohen_d)
+diff_no_train_cabat <- c_dat %>%
+  filter(music_lessons_n == 0) %>%
+  summarise(cohen_d = effectsize::cohens_d(cabat_ability ~ gender_n)) %>%
+  tidyr::unpack(cols = cohen_d)
+```
+
+These tree models reveal that subgroups constructed from these other variables reveal slightly larger effect sizes for sex than those estimated in the full distribution.
+These can be explained by the covariate musical training.
+Musical training is positively related to musical ability, and females participants reported having higher musical training on average.
+Hence, when data are conditioned on musical training (i.e. males and females are made statistically equal in terms of training), the estimated sex difference effect size slightly increased, with a small male advantage in most subgroups.
+This appears to be a version of Simpson's paradox, where there are (almost) no differences in the full sample, but slightly stronger differences emerge for (almost) all subgroups analysed.
+To contextualize this apparent indication that conditioning on musical training increased the estimated effect size, we reran the main analysis of sex differences on the subset of participants who reported no musical training (i.e. participants who were, in fact, matched on musical training). Among participants that reported no musical training, we observed a sex difference on general music perception ability of magnitude Cohen's d = `r diff_no_train_mus$Cohens_d %>% round(digits = 3)` (negative score indicating a male advantage; mistuning perception Cohen's d = `r diff_no_train_mpt$Cohens_d %>% round(digits = 3)`; melodic discrimination Cohen's d = `r diff_no_train_mpt$Cohens_d %>% round(digits = 3)`; beat alignment Cohen's d = `r diff_no_train_cabat$Cohens_d %>% round(digits = 3)`; see \textit{SI Figure 2} for male and female distributions on general music perception ability, for "yes" and "no" music training). Here, too, all estimated sex differences fall under the range of what are considered very small, and inconsistently estimating an advantage for men or women. 
+
+### Testing for differences in self-assessed music skills
+On the four questions that asked about the main study's participants' self-reported musical ability (see \textit{SI Table 3}), men and women's responses to them differed minimally. We tested for differences in mean responses using logistic regression where the answers were binary (Yes/No questions), and Wilcoxon tests where answers were ordinal (i.e. answers on a scale of 1-5 or 1-6).\  
+
+(i) “Can you tap in time with a musical beat?” (answer binary yes/no).\  
+
+(ii) “How good do you think your musical listening skills are (things like remembering melodies, hearing out of tune notes, or hearing a beat that is out of sync with the music)?” (6-point scale).  \ 
+
+(iii) "Think of your skill at making music (using a musical instrument or singing). How would you rate your own skill?" (5-point scale).  \
+
+(iv) “When you are singing, can you tell if you are out-of-tune or off-key?” (answer binary yes/no).\ 
+
+# End notes
+
+## Data, code, and materials availability
+
+A fully reproducible manuscript, with data, analysis code, and visualizations is available at <https://github.com/themusiclab/sex-differences>.
+Readers may participate in the perception test by visiting <https://themusiclab.org/quizzes/miq>.
+
+## Acknowledgments
+This research was supported by the Harvard Data Science Initiative (S.A.M.), the National Institutes of Health Director’s Early Independence Award DP5OD024566 (S.A.M), the Royal Society of New Zealand Te Apārangi Rutherford Discovery Fellowship RDF-UOA2103 (S.A.M.), Natural Sciences and Engineering Research Council of Canada, Grant/Award Number: 05016 (J.T.S.), Fonds de Recherche du Québec Nature et Technologies, Grant/Award Number: PR-299652 (S.C.W.), an Anneliese Maier research prize awarded by the Humboldt Foundation (D.M.), a doctoral training grant from Fonds de Recherche du Québec Nature et Technologies https://doi.org/10.69777/348674 (M.B.), and the Center for Research on Brain, Language, and Music (M.B.). We thank the participants, Christopher Sturdy, and members of The Music Lab and The Peretz Lab for feedback, Courtney Hilton and Peter Harrison for technical assistance. 
+
+## Author contributions
+Conception S.A.M., D.M.; experimental design and implementation, S.A.M.; participant recruitment, data management, and data processing, S.A.M., D.M., M.B.; analysis and visualization, M.B., D.M.; writing, M.B., D.M., I.P., S.C.W., J.T.S., S.A.M.
+
+\newpage
+# Supplementary Information
+
+## Supplementary Text: Is there greater male variability?
+The "Greater Male Variability Hypothesis" argues that some dimorphisms manifest as greater variability - not greater averages - in males than in females (e.g., "more idiots, more geniuses"[@Pinker1997]). Significant (p \< 0.05 for each) but small gender differences in variances were observed, but like the differences in mean performance found in individual tests, they were of internally inconsistent directions: variances were significantly larger for men in the mistuning perception (men:women variance ratio: `r var_ratio[var_ratio$DV == "mpt", "ratio"]`) and melodic discrimination tests (men:women variance ratio: `r var_ratio[var_ratio$DV == "mdt", "ratio"]`), and larger for women in the beat alignment test (men:women variance ratio: `r var_ratio[var_ratio$DV == "cabat", "ratio"]`; see \textit{Tables 1, 2} for variance ratios for all tests, in the main and replication studies). The variance ratios all being close to 1, however, indicates highly similar variances between men and women [@Hyde2014]. Thus, we find no clear evidence in support of higher male variability in music perception ability.
+
+## Supplementary Tables
+
+```{r SItable1 participant education, results = "asis"}
+dat %>%
+  dplyr::select(age, gender_n, education_n) %>%
+  group_by(gender_n) %>% 
+  summarise(N = n(),
+            age_mean = round(mean(age), digits = 1),
+            age_sd = round(sd(age), digits = 1),
+            high_school = sum(education_n == 4, na.rm = TRUE), 
+            some_undergrad = sum(education_n == 5, na.rm = TRUE),
+            undergrad = sum(education_n %in% c(6,7), na.rm = TRUE), # complete high school + some graduate school
+            postgrad = sum(education_n == 8, na.rm = TRUE)) %>%
+  group_by(gender_n) %>%
+  # add % for education 
+  mutate(hs_pc = round((high_school*100)/N), 
+         some_ug_pc = round((some_undergrad*100)/N),
+         ug_pc = round((undergrad*100)/N), 
+         grad_pc = round((postgrad*100)/N)) %>%
+  mutate(hs_paste = paste0(high_school, " (", hs_pc, "\\%)", sep = ""),
+         some_ug_paste = paste0(some_undergrad, " (", some_ug_pc, "\\%)", sep = ""),
+         ug_paste = paste0(undergrad, " (", ug_pc, "\\%)", sep = ""),
+         grad_paste = paste0(postgrad, " (", grad_pc, "\\%)", sep = "")) %>%
+  select(gender_n, N, age_mean, age_sd, hs_paste, some_ug_paste, ug_paste, grad_paste) %>%
+  janitor::clean_names() %>%
+  kable(.,
+        format.args = list(big.mark = ","), # 1000 comma separator
+        format = "latex",
+        booktabs = TRUE,
+        col.names = c("Gender", "n", "Age (years, mean)", "Age (SD)", "High Schoool", "Some Undergrad", "Undergrad", "Postgrad"),
+        escape = FALSE, 
+        linesep = "\\addlinespace",
+        longtable = FALSE, # set to FALSE to stop this table being split across pages
+        align=rep('l', 10))  %>%
+        footnote(general = "Participant information for the main study, broken down by self-reported gender, age, and education. Percentages per row do not add up to 100 because not all participants opted to report education information.",
+           general_title = "SI Table 1 |",
+           footnote_as_chunk = TRUE,
+           title_format = "bold",
+           escape = FALSE,
+           threeparttable = TRUE) %>%
+  add_header_above(header = c(" " = 4, "Highest education completed" = 4)) %>%
+  kable_styling(latex_options = "HOLD_position") %>%
+    column_spec(column = 3, width = "0.6in") 
+```
+\newpage
+
+```{r SItable2 effect sizes with covariates, results = "asis"}
+p_esq <-  map_dfr(vars, function(v) effectsize::eta_squared(lm(as.formula(sprintf(" %s ~ gender_n + mus_train + mus_listen  + age + education_n+ lessons_age_n", v)), data = c_dat))[1,"Eta2_partial"] %>% broom::tidy())
+r2 <- map_dfr(vars, function(v) summary(lm(as.formula(sprintf(" %s ~ gender_n + mus_train + mus_listen  + age + education_n+ lessons_age_n", v)), data = c_dat))$r.squared %>% broom::tidy())
+
+# m1 <- lm(mus_ability ~ gender_n, data = c_dat)
+# m2 <- lm(mus_ability ~ gender_n + mus_train + mus_listen  + age + education_n + lessons_age_n, dat = c_dat)
+
+
+out <- data.frame(DV=vars, p_eta_sq_gender=p_esq$x, R2_full_model=r2$x)
+from_tab1 <- effectsizes_all %>%
+  filter(data == "main") %>%
+  mutate(DV = ifelse(DV == "mpt", "mpt_ability", 
+                     ifelse(DV == "mdt", "mdt_ability", 
+                            ifelse(DV == "cabat", "cabat_ability", "mus_ability")))) %>%
+  mutate(across(c(eta_sq, R2), round, digits = 3)) %>%
+  select(DV, eta_sq, R2)
+
+out %>%
+  full_join(from_tab1) %>%
+  mutate(DV = ifelse(DV == "mpt_ability", "Mistuning Perception", 
+                     ifelse(DV == "mdt_ability", "Melodic Discrimination", 
+                            ifelse(DV == "cabat_ability", "Beat Alignment", "General Music Perception Ability")))) %>%
+  mutate(p_eta_sq_gender = round(p_eta_sq_gender, digits = 3), 
+         R2_full_model = round(R2_full_model, digits = 3)) %>%
+  kable(.,
+        format = "latex",
+        booktabs = TRUE,
+        escape = F,
+        col.names = c("Task", "$\\eta^2$ of gender in simple model", "$R^2$ simple model", "partial $\\eta^2$ of gender in full model", "$R^2$ full model")) %>% 
+        footnote(general = "The estimated gender effect remains of a comparable magnitude when other participant covariates - age, education, age at start of any music lessons, musical training, and musical listening - are added to a simple model that uses only gender. This analysis was run on the main study data. $R^2$ values lower in full model due to missing observations (some participants opted to not report information for extra covariates).",
+           general_title = "SI Table 2 | Full model, gender and covariates",
+           footnote_as_chunk = TRUE,
+           title_format = "bold",
+           escape = FALSE,
+           threeparttable = TRUE) %>%
+  kable_styling(position = "center", 
+                latex_options = "HOLD_position") %>%
+    column_spec(column = 2:5, width = "0.7in") 
+
+                
+```
+\newpage
+
+```{r SItable3 prep}
+# SI table detailing all items, their possible responses, and how the verbal responses were coded numerically
+# MB: deliberately loading in plyr here, late, to not interfere with dplyr verbs higher up
+library(plyr)
+SI_dat <- readRDS("../data/clean-person-level-data-filtered.rds") %>% 
+  select("music_tap", "out_of_tune", "music_skill", "music_listen", "lessons_enjoy", "lessons_peers", "theory_training", "music_feel", "music_listen_time", "familiarity_tradmusic") %>%
+  # mutate to character to allow pivot longer
+  mutate(music_listen = as.character(music_listen)) %>% 
+  pivot_longer(everything(), names_to = "item", values_to = "answer") %>%
+  filter(!is.na(answer)) %>%
+  unique()
+
+SI_dat_table <- SI_dat %>%
+  mutate(verbal = NA,
+         num = NA) %>%
+  mutate(verbal = case_when(
+    item == "music_tap" ~ "Can you tap in time with a musical beat?",
+    item == "out_of_tune" ~ "When you are singing, can you tell if you are out-of-tune or off-key?",
+    item == "music_skill" ~ "Think of your skill at making music (using a musical instrument or singing). How would you rate your own skill?", 
+    item == "music_listen" ~ "How good do you think your music listening skills are? (things like remembering melodies, hearing out of tune notes, or hearing a beat that is out of sync with the music)",
+    item == "lessons_enjoy" ~ "How much did you enjoy your music lessons?",
+    item == "lessons_peers" ~ "Think about your peers in the time when you first did music lessons. How did your musical skills compare to theirs?",
+    item == "theory_training" ~ "Have you ever had any music theory training?",
+    item == "music_feel" ~ "Have you ever experienced \"chills\" or \"goosebumps\" in response to music?",
+    item == "music_listen_time" ~ "On an average day, how much time do you spend listening to music and/or watching videos that include music?",
+    item == "familiarity_tradmusic" ~ "How familiar are you with traditional music from around the world?"
+  ))
+
+SI_dat_table <- SI_dat_table %>%
+  mutate(num = case_when(
+    answer == "Yes" ~ 1,
+    answer == "No" ~ 0,
+    answer == "I'm not sure" ~ NA,
+    # lessons_enjoy
+    answer == "I disliked them a lot" ~ 1,
+    answer == "I disliked them a little" ~ 2,
+    answer == "I liked them a little" ~ 3,
+    answer == "I liked them a lot" ~ 4,
+    # lessons_peers
+    answer == "They were a lot better than me" ~ 1,
+    answer == "They were a little better than me" ~ 2,
+    answer == "I was a little better than them" ~ 3,
+    answer == "I was a lot better than them" ~ 4,
+    # music_listen_time 
+    answer == "No time at all" ~ 1,
+    answer == "1-5 minutes" ~ 2,
+    answer == "6-10 minutes" ~ 3,
+    answer == "11-15 minutes" ~ 4,
+    answer == "16-30 minutes" ~ 5,
+    answer == "31-60 minutes" ~ 6,
+    answer == "1-2 hours" ~ 7,
+    answer == "2-4 hours" ~ 8,
+    answer == "More than 4 hours" ~ 9,
+    # music_skill
+    answer == "I have no skill at all" ~ 1,
+    answer == "I'm a novice" ~ 2,
+    answer == "I have some skill" ~ 3,
+    answer == "I have a lot of skill" ~ 4,
+    answer == "I'm an expert" ~ 5,
+    # theory_training
+    answer == "No music theory training" ~ 1,
+    answer == "A little music theory training" ~ 2,
+    answer == "Some music theory training" ~ 3,
+    answer == "A moderate amount of music theory training" ~ 4,
+    answer == "A lot of music theory training" ~ 5,
+    # familiarity_tradmusic
+    answer == "I've never heard traditional music" ~ 1,
+    answer == "I'm a little familiar with traditional music" ~ 2,
+    answer == "I'm somewhat familiar with traditional music" ~ 3,
+    answer == "I'm very familiar with traditional music" ~ 4,
+    # music_feel (chills)
+    answer == "No, never" ~ 1,
+    answer == "Yes, but rarely" ~ 2,
+    answer == "Yes, sometimes" ~ 3,
+    answer == "Yes, often" ~ 4,
+  ))
+
+# music_listen was answered on a sliding scale, and then sliced into 6 segments in preprocessing
+music_listen_add <- data.frame(item = rep("music_listen", 6),
+                               answer = rep("'I'm much worse than other people' ---[sliding scale]--- 'I'm much better than other people'", 6),
+                               verbal = rep("How good do you think your music listening skills are? (things like remembering melodies, hearing out of tune notes, or hearing a beat that is out of sync with the music)", 6),
+                               num = c(1:6))
+SI_dat_table <- SI_dat_table %>%
+  filter(item != "music_listen") %>%
+  full_join(music_listen_add)
+
+# human readable item names 
+SI_dat_table <- SI_dat_table %>%
+  mutate(item = case_when(
+    item == "music_tap" ~ "Tap In Time",
+    item == "out_of_tune" ~ "Out Of Tune",
+    item == "music_skill" ~ "Musical Skill",
+    item == "music_listen" ~ "Music Listening Skill",
+    item == "lessons_enjoy" ~ "Enjoyed Lessons", 
+    item == "lessons_peers" ~ "Compared to Peers",
+    item == "theory_training" ~ "Theory Training",
+    item == "music_feel" ~ "Experience Chills",
+    item == "music_listen_time" ~ "Listening Time",
+    item == "familiarity_tradmusic" ~ "Familiarity Traditional Music"
+  )) 
+
+# putting in column to mark the conceptual groups
+SI_dat_table <- SI_dat_table %>%
+  mutate(factor = case_when(
+    item %in% c("Tap In Time", "Out Of Tune", "Musical Skill", "Music Listening Skill") ~ "Self-reported Musical Ability",
+    item %in% c("Enjoyed Lessons", "Compared to Peers", "Theory Training") ~ "Formal Musical Training",
+    item %in% c("Experience Chills", "Listening Time", "Familiarity Traditional Music") ~ "Extent, Intensity, and Breadth of Musical Listening"))
+
+SI_dat_table <- SI_dat_table %>%
+# and reorder
+  dplyr::select(factor, verbal, answer, num) %>% 
+  dplyr::arrange(num) %>%
+  dplyr::arrange(verbal) %>%
+  dplyr::arrange(factor, by_group = TRUE) 
+```
+\newpage
+```{r SItable3, results = "asis"}
+SI_dat_table %>%
+  kable(.,
+        format = "latex",
+        booktabs = TRUE,
+        col.names = c("Factor", "Item", "Response Options", "Numeric Coding"),
+        escape = FALSE, 
+        linesep = "\\addlinespace",
+        longtable = TRUE,
+        align=rep('l', 10)) %>%
+        footnote(general = "Details of item verbal prompts, response options, and numeric coding of responses.",
+           general_title = "SI Table 3 | Items",
+           footnote_as_chunk = TRUE,
+           title_format = "bold",
+           escape = FALSE,
+           threeparttable = TRUE) %>%
+  column_spec(column = 1, width = "1.2in") %>%
+  column_spec(column = 2, width = "1.9in") %>%
+  column_spec(column = 3, width = "1.5in") %>%
+  column_spec(column = 4, width = "0.5in") %>%
+  collapse_rows() #%>%
+#  kable_styling(full_width = TRUE)
+
+```
+\newpage
+```{r SITable4, results = "asis"}
+out_tree %>%
+  select(DV, cohens_d_lb, cohens_d_ub) %>%
+  mutate(DV = ifelse(DV == "mpt_ability", "Mistuning Perception", 
+                     ifelse(DV == "mdt_ability", "Melodic Discrimination", 
+                            ifelse(DV == "cabat_ability", "Beat Alignment", 
+                                   "General Music Perception Ability")))) %>%
+  tibble::remove_rownames() %>%
+  mutate(across(-DV, round, 3),
+         across(-DV, ~.x *-1)) %>%  
+  kable(.,
+        digits = 3,
+        format = "latex",
+        booktabs = TRUE,
+        col.names = c("Task", "Cohen's d, lower bound", "Cohen's d, upper bound"),
+        escape = FALSE, 
+        linesep = "\\addlinespace",
+        longtable = TRUE,
+        align=rep('l', 10)) %>%
+        footnote(general = "Tree models estimated the magnitude of sex differences in music perception tests in different subgroups of participants in the main study, as partitioned on participant age, education, start age of music lessons, and factors musical training and musical listening. Negative scores indicate a male advantage.",
+           general_title = "SI Table 4 | Range of Cohen's d observed in tree models",
+           footnote_as_chunk = TRUE,
+           title_format = "bold",
+           escape = FALSE,
+           threeparttable = TRUE)
+```
+\newpage
+
+## Supplementary Figures
+
+```{r SEM, results = 'asis', out.width="77%", fig.show="hold", fig.cap="\\textbf{SI Figure 1 | Structural Equation Models} Top row shows gender-only models, bottom row shows all-covariate models. Left panels in each row show the models for female participants; right panels show these models for males."}
+# gender only models
+layout(t(1:2))
+semPaths(lv_sex_diffs,intercepts=T, "eq", ask=F, intAtSide = T,"std",mar = c(8, 1, 5, 1))
+
+# full models (gender + covariates)
+layout(t(1:2))
+semPaths(lv_sex_diffs_covariates,intercepts=T, "eq", ask=F, intAtSide = T, "est",mar = c(8, 1, 5, 1))
+```
+
+\newpage
+
+```{r SI_fig_2_lessons, results = "asis", out.width="100%", fig.cap= "\\textbf{SI Figure 2 | Participants who had taken music lessons had higher musical ability than paticipants who had not.} There was a difference in general music perception ability scores of d=0.684 between the those who self report having had or not had music lessons in their life. This same pattern manifested similarly among men and women. Among those who reported no music lessons, we observed a sex difference of Cohen's d = -0.099. Bolder colours for distributions and lines indicate female distributions; dashed lines indicate mean general music perception ability, for each subgroup of gender*music lessons."}
+
+# means per subgroup
+mean_lessons <- c_dat %>%
+  filter(!is.na(music_lessons_n)) %>%
+  group_by(gender_n, music_lessons_n) %>%
+  summarise(mean_mus = mean(mus_ability))
+
+c_dat %>%
+  mutate(music_lessons = as.factor(music_lessons_n)) %>%
+  filter(!is.na(music_lessons)) %>%
+  ggplot(aes(x=mus_ability, fill = music_lessons)) + 
+  geom_density(
+    data = ~ subset(.x, gender_n == "Female"),
+    alpha = 0.6
+  ) + 
+  geom_density(
+    data = ~ subset(.x, gender_n == "Male"),
+    aes(y = -after_stat(density)),
+    alpha = 0.25
+  ) + 
+  geom_hline(yintercept = 0, color = "black") +
+  scale_y_continuous(labels = abs) + 
+  labs(x = "General Music Perception Ability", y = "Density") +
+  scale_fill_manual(name="Music Lessons", labels=c("No", "Yes"), values = c("red", "green")) +
+  theme_classic() + 
+  theme(legend.justification=c(0,1), legend.position=c(0.03,1.03), legend.background = element_rect(fill = "transparent", colour = "transparent")) + 
+  annotate(
+    "text", x = 1.25, y = 0.6, label = "Female", fontface = "bold", size = 6,
+  ) + 
+  annotate(
+    "text", x = 1.25, y = -0.6, label = "Male", fontface = "bold", size = 6
+  ) + 
+  # female, no lessons
+  geom_vline(xintercept = -0.168, linetype = "dashed", color = "red") + 
+  # female, yes lessons
+  geom_vline(xintercept = 0.0703, linetype = "dashed", color = "green") + 
+  # male, no lessons
+  geom_vline(xintercept = -0.135, linetype = "dashed", color = "pink") + 
+  # male, yes lessons
+  geom_vline(xintercept = 0.0800, linetype = "dashed", color = "lightgreen") 
+```
+
+\newpage
+
+# References
